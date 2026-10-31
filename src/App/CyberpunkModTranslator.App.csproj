@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- WinExe : pas de fenetre de console sous Windows -->
+    <OutputType>WinExe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>CyberpunkModTranslator.App</RootNamespace>
+    <AssemblyName>CyberpunkModTranslator</AssemblyName>
+    <Version>0.5.0</Version>
+    <NoWarn>CA1416</NoWarn>
+  </PropertyGroup>
+
+  <!-- L'interface (HTML/CSS/JS) est integree dans l'exe : un seul fichier a distribuer avec ses DLL -->
+  <ItemGroup>
+    <Content Remove="wwwroot\**" />
+    <None Remove="wwwroot\**" />
+    <EmbeddedResource Include="wwwroot\**" LogicalName="wwwroot/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- Fichiers de langue copies dans dist\lang : on peut en ajouter sans recompiler -->
+  <ItemGroup>
+    <None Include="..\..\lang\*.json;..\..\lang\README.md" Link="lang\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Core\CyberpunkModTranslator.Core.csproj" />
+  </ItemGroup>
+
+</Project>

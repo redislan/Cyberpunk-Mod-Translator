@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Cyberpunk Mod Translator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<!-- Les textes viennent des fichiers lang\*.json (attributs data-i18n) : la page reste cachee jusqu'a leur arrivee -->
+<body class="i18n-loading">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">CMT</div>
+      <div>
+        <div class="title">Cyberpunk Mod Translator</div>
+        <div class="subtitle" id="modName" data-i18n="header.noMod">No mod open</div>
+      </div>
+    </div>
+    <nav class="actions">
+      <button class="btn" id="btnOpen" data-i18n="btn.open" data-i18n-title="btn.open.tip">Open a mod</button>
+      <button class="btn needs-project" id="btnImportTrad" data-i18n="btn.importTrad" data-i18n-title="btn.importTrad.tip">Reuse a translation</button>
+      <div class="menu needs-project">
+        <button class="btn" id="btnTsv" data-i18n="btn.tsv">TSV ▾</button>
+        <div class="menu-list hidden" id="tsvMenu">
+          <button id="btnExportTsv" data-i18n="btn.exportTsv">Export for Excel</button>
+          <button id="btnImportTsv" data-i18n="btn.importTsv">Import a TSV</button>
+        </div>
+      </div>
+      <button class="btn needs-project" id="btnSave" title="Ctrl+S" data-i18n="btn.save">Save</button>
+      <button class="btn icon" id="btnSettings" data-i18n-title="settings.title">⚙</button>
+      <button class="btn primary needs-project" id="btnBuild" data-i18n="btn.build">Build the translation</button>
+    </nav>
+  </header>
+
+  <div class="banner hidden" id="banner"></div>
+
+  <main class="welcome" id="welcome">
+    <div class="welcome-card">
+      <h1 data-i18n="welcome.title">Translate a Cyberpunk 2077 mod</h1>
+      <ol class="steps">
+        <li><b data-i18n="welcome.step1.title">Open a mod</b><span data-i18n="welcome.step1.text"></span></li>
+        <li><b data-i18n="welcome.step2.title">Translate</b><span id="welcomeStep2"></span></li>
+        <li><b data-i18n="welcome.step3.title">Build the translation</b><span id="welcomeStep3"></span></li>
+      </ol>
+      <button class="btn primary big" id="btnOpenBig" data-i18n="btn.open">Open a mod</button>
+      <div class="recent" id="recent"></div>
+    </div>
+  </main>
+
+  <main class="workspace hidden" id="workspace">
+    <aside class="sidebar">
+      <div class="progress-box">
+        <div class="progress-label"><span data-i18n="side.progress">Progress</span><span id="progressText">0 %</span></div>
+        <div class="progress-bar"><div id="progressFill"></div></div>
+        <div class="progress-detail" id="progressDetail"></div>
+      </div>
+      <div class="side-title" data-i18n="side.files">Files</div>
+      <div class="files" id="files"></div>
+      <div class="notes" id="notes"></div>
+    </aside>
+
+    <section class="content">
+      <div class="toolbar">
+        <input type="search" id="search" data-i18n-placeholder="search.placeholder">
+        <div class="chips" id="chips"></div>
+        <label class="check"><input type="checkbox" id="onlyEmpty"> <span data-i18n="filter.onlyEmpty">Untranslated only</span></label>
+      </div>
+      <div class="table-head">
+        <div>#</div><div data-i18n="table.status">Status</div><div data-i18n="table.source">English</div><div id="targetHead"></div>
+      </div>
+      <div class="table" id="table"></div>
+      <div class="pager" id="pager"></div>
+    </section>
+
+    <aside class="detail" id="detail"></aside>
+  </main>
+
+  <footer class="statusbar">
+    <span id="sbCompressor"></span>
+    <span id="sbCount"></span>
+    <span id="sbSave"></span>
+  </footer>
+
+  <div class="modal hidden" id="modal"><div class="dialog" id="dialog"></div></div>
+  <div class="busy hidden" id="busy"><div class="spinner"></div><div id="busyText" data-i18n="busy.default">Please wait…</div></div>
+  <div class="toasts" id="toasts"></div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>
