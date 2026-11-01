@@ -104,7 +104,7 @@ public static class NativeDialog
             {
                 var item = TryItem(place);
                 if (item == null) continue;
-                try { dialog.AddPlace(item, FDAP_TOP); } catch { /* pas grave */ }
+                try { dialog.AddPlace(item, FDAP_TOP); } catch (Exception ex) { Log.Debug($"Raccourci non ajoute a la fenetre Ouvrir ({place}) : {ex.Message}"); }
                 finally { Marshal.ReleaseComObject(item); }
             }
 
@@ -114,7 +114,7 @@ public static class NativeDialog
             var startItem = Directory.Exists(start) ? TryItem(start) : null;
             if (startItem != null)
             {
-                try { dialog.SetFolder(startItem); } catch { /* on garde le dossier par defaut */ }
+                try { dialog.SetFolder(startItem); } catch (Exception ex) { Log.Debug($"Dossier de depart refuse ({start}) : {ex.Message}"); }
                 finally { Marshal.ReleaseComObject(startItem); }
             }
             else
@@ -123,7 +123,7 @@ public static class NativeDialog
                 var first = TryItem(Directory.Exists(fallback) ? fallback : AppPaths.Downloads);
                 if (first != null)
                 {
-                    try { dialog.SetDefaultFolder(first); } catch { /* pas grave */ }
+                    try { dialog.SetDefaultFolder(first); } catch (Exception ex) { Log.Debug($"Dossier par defaut refuse : {ex.Message}"); }
                     finally { Marshal.ReleaseComObject(first); }
                 }
             }
@@ -157,8 +157,9 @@ public static class NativeDialog
             SHCreateItemFromParsingName(path, IntPtr.Zero, ref iid, out var item);
             return item;
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Debug($"Chemin refuse par le shell ({path}) : {ex.Message}");
             return null;
         }
     }
@@ -237,9 +238,10 @@ public static class NativeDialog
                 return;
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // la fenetre reste ouverte, simplement sans le focus
+            // La fenetre reste ouverte, simplement sans le focus
+            Log.Debug($"Fenetre Ouvrir non amenee au premier plan : {ex.Message}");
         }
     }
 

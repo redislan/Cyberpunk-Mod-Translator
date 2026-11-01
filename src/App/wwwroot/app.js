@@ -117,9 +117,32 @@ async function api(path, body) {
   if (txt) {
     try { data = JSON.parse(txt); } catch { data = null; }
   }
-  if (!r.ok) throw new Error((data && data.error) || t('error.http', r.status));
+  if (!r.ok) {
+    const err = new Error((data && data.error) || t('error.http', r.status));
+    err.fromApi = true; // deja ecrite dans le journal par le programme
+    throw err;
+  }
   return data;
 }
+
+/**
+ * Ecrit une erreur de la page dans le journal de session du programme.
+ * Les erreurs renvoyees par le programme (fromApi) y sont deja : on ne les double pas.
+ */
+function reportError(e, where) {
+  if (e && e.fromApi) return;
+  const detail = e && e.stack ? e.stack : String(e && e.message ? e.message : e);
+  const message = `${where || 'page'} : ${detail}`;
+  console.error(message);
+  fetch('/api/log', {
+    method: 'POST',
+    headers: { 'X-Token': TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level: 'error', message }),
+  }).catch(() => { /* programme injoignable : l'erreur reste dans la console */ });
+}
+
+window.addEventListener('error', (ev) => reportError(ev.error || ev.message, `${ev.filename || ''}:${ev.lineno || 0}`));
+window.addEventListener('unhandledrejection', (ev) => reportError(ev.reason, 'promesse'));
 
 async function busy(text, fn) {
   $('busyText').textContent = text;
@@ -127,6 +150,7 @@ async function busy(text, fn) {
   try {
     return await fn();
   } catch (e) {
+    reportError(e, text);
     toast(e.message, 'error');
     return null;
   } finally {
@@ -168,6 +192,7 @@ async function flush() {
     if (S.pending.size === 0) setSaveStatus('saved');
     return true;
   } catch (e) {
+    reportError(e, 'sauvegarde');
     for (const it of items) if (!S.pending.has(it.id)) S.pending.set(it.id, it.fr);
     setSaveStatus('error');
     toast(t('save.failed', e.message), 'error');
@@ -898,6 +923,11 @@ async function openSettings() {
           el('div', { class: 'inline' }, out, browse(out, t('settings.output.title'), 'sortie'))),
         el('div', { class: 'form-row' }, el('label', {}, t('settings.target')), lang,
           el('div', { class: 'help' }, t('settings.target.help'))),
+        el('div', { class: 'form-row' }, el('label', {}, t('settings.logs')),
+          el('div', { class: 'lang-tools' },
+            el('div', { class: 'help' }, t('settings.logs.help')),
+            el('button', { class: 'btn small', onclick: () => api('/reveal-logs', {}).catch((e) => toast(e.message, 'error')) },
+              t('settings.logs.open')))),
         el('div', { class: 'form-row' }, el('div', { class: 'help' }, t('settings.data', S.state.dataDir)))),
       [el('button', { class: 'btn', onclick: closeModal }, t('btn.cancel')),
         el('button', {
@@ -1030,8 +1060,9 @@ async function init() {
   bind();
   try {
     await loadLanguage();
-  } catch {
-    // pas de textes : la page garde ses textes anglais, le message d'erreur vient juste apres
+  } catch (e) {
+    // Pas de textes : la page garde ses textes anglais, le message d'erreur vient juste apres
+    reportError(e, 'langue');
   }
   document.body.classList.remove('i18n-loading');
   try {
@@ -1039,6 +1070,7 @@ async function init() {
     if (S.state.project) await loadUnits();
     renderDetail(null);
   } catch (e) {
+    reportError(e, 'demarrage');
     toast(t('error.unreachable', e.message), 'error');
   }
 }

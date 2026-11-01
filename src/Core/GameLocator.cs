@@ -26,9 +26,9 @@ public static class GameLocator
                     !found.Contains(full, StringComparer.OrdinalIgnoreCase))
                     found.Add(full);
             }
-            catch
+            catch (Exception ex)
             {
-                // chemin invalide : on ignore
+                Log.Debug($"Chemin du jeu ignore ({dir}) : {ex.Message}");
             }
         }
 
@@ -43,16 +43,23 @@ public static class GameLocator
                 var vdf = Path.Combine(steam, "steamapps", "libraryfolders.vdf");
                 if (File.Exists(vdf))
                 {
-                    foreach (Match m in Regex.Matches(File.ReadAllText(vdf), "\"path\"\\s+\"([^\"]+)\""))
-                        libs.Add(m.Groups[1].Value.Replace(@"\\", @"\"));
+                    try
+                    {
+                        foreach (Match m in Regex.Matches(File.ReadAllText(vdf), "\"path\"\\s+\"([^\"]+)\""))
+                            libs.Add(m.Groups[1].Value.Replace(@"\\", @"\"));
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn($"Bibliotheques Steam illisibles ({vdf})", ex);
+                    }
                 }
                 foreach (var lib in libs)
                     Add(Path.Combine(lib, "steamapps", "common", "Cyberpunk 2077"));
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // pas de Steam
+            Log.Warn("Recherche du jeu dans Steam impossible", ex);
         }
 
         // GOG
@@ -60,9 +67,9 @@ public static class GameLocator
         {
             Add(Registry.GetValue($@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\GOG.com\Games\{GogGameId}", "path", null) as string);
         }
-        catch
+        catch (Exception ex)
         {
-            // pas de GOG
+            Log.Warn("Recherche du jeu dans GOG impossible", ex);
         }
 
         // Epic : manifestes JSON du launcher
@@ -73,17 +80,25 @@ public static class GameLocator
             {
                 foreach (var item in Directory.EnumerateFiles(manifests, "*.item"))
                 {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(item));
-                    if (doc.RootElement.TryGetProperty("DisplayName", out var name) &&
-                        (name.GetString() ?? "").Contains("Cyberpunk", StringComparison.OrdinalIgnoreCase) &&
-                        doc.RootElement.TryGetProperty("InstallLocation", out var loc))
-                        Add(loc.GetString());
+                    // Un manifeste abime ne doit pas empecher de lire les autres
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(File.ReadAllText(item));
+                        if (doc.RootElement.TryGetProperty("DisplayName", out var name) &&
+                            (name.GetString() ?? "").Contains("Cyberpunk", StringComparison.OrdinalIgnoreCase) &&
+                            doc.RootElement.TryGetProperty("InstallLocation", out var loc))
+                            Add(loc.GetString());
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn($"Manifeste Epic illisible : {item}", ex);
+                    }
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // pas d'Epic
+            Log.Warn("Recherche du jeu dans Epic impossible", ex);
         }
 
         // Cles de desinstallation Windows
@@ -96,18 +111,28 @@ public static class GameLocator
                 if (key == null) continue;
                 foreach (var sub in key.GetSubKeyNames())
                 {
-                    using var k = key.OpenSubKey(sub);
-                    if ((k?.GetValue("DisplayName") as string ?? "").Contains("Cyberpunk 2077", StringComparison.OrdinalIgnoreCase))
-                        Add(k!.GetValue("InstallLocation") as string);
+                    // Une cle protegee ou abimee ne doit pas arreter la recherche dans les autres.
+                    // Add() ne garde un dossier que s'il contient bin\x64\Cyberpunk2077.exe.
+                    try
+                    {
+                        using var k = key.OpenSubKey(sub);
+                        if ((k?.GetValue("DisplayName") as string ?? "").Contains("Cyberpunk 2077", StringComparison.OrdinalIgnoreCase))
+                            Add(k!.GetValue("InstallLocation") as string);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug($"Cle de desinstallation ignoree ({sub}) : {ex.Message}");
+                    }
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // registre inaccessible
+            Log.Warn("Lecture des cles de desinstallation impossible", ex);
         }
 
         _ = SteamAppId;
+        Log.Debug(found.Count == 0 ? "Dossier du jeu : aucun trouve automatiquement" : "Dossier du jeu trouve : " + string.Join(" ; ", found));
         return found;
     }
 }

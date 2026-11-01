@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 // -------------------------------------------------------------------------------------------------
 // Cyberpunk Mod Translator : petit serveur local (127.0.0.1 uniquement) + interface affichee
 // dans une fenetre d'application Edge. Fermer la fenetre arrete le programme.
-// Options (pour les tests) : --port N  --sans-fenetre  --oodle <dll>  --jeu <dossier du jeu>
+// Options (pour les tests) : --port N  --sans-fenetre  --oodle <dll>  --jeu <dossier du jeu>  --debug (journal detaille)
 // -------------------------------------------------------------------------------------------------
 
 var port = 0;
@@ -23,8 +23,22 @@ for (var i = 0; i < args.Length; i++)
         case "--sans-fenetre": noWindow = true; break;
         case "--oodle" when i + 1 < args.Length: oodle = args[++i]; break;
         case "--jeu" when i + 1 < args.Length: gameDir = args[++i]; break;
+        case "--debug": Log.DebugEnabled = true; break;
     }
 }
+
+// Journal de session (%AppData%\CyberpunkModTranslator\logs) : a ouvrir avant tout le reste
+Log.Start("CyberpunkModTranslator", AppPaths.Logs);
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    Log.Error("Plantage du programme", e.ExceptionObject as Exception);
+    Log.End();
+};
+TaskScheduler.UnobservedTaskException += (_, e) =>
+{
+    Log.Error("Erreur dans une tache en arriere-plan", e.Exception);
+    e.SetObserved();
+};
 
 var state = new AppState(oodle, gameDir);
 var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
@@ -59,7 +73,8 @@ app.Use(async (ctx, next) =>
     }
     catch (Exception ex)
     {
-        state.Log(ex);
+        // Toute erreur d'une action : ecrite dans le journal et renvoyee a la page, qui l'affiche
+        Log.Error($"{ctx.Request.Method} {ctx.Request.Path} : {ex.Message}", ex);
         if (!ctx.Response.HasStarted)
         {
             ctx.Response.StatusCode = 400;
@@ -109,6 +124,21 @@ api.MapPost("/reveal-lang", () =>
     state.Reveal(UiText.Folder);
     return Results.Ok();
 });
+// Journal : ouvre le dossier en selectionnant le journal de la session en cours
+api.MapPost("/reveal-logs", () =>
+{
+    state.Reveal(Log.FilePath != null && File.Exists(Log.FilePath) ? Log.FilePath : Log.Folder);
+    return Results.Ok();
+});
+// Erreurs de la page (JavaScript) : ecrites dans le meme journal
+api.MapPost("/log", (ClientLog r) =>
+{
+    var level = r.Level switch { "error" => LogSeverity.Error, "warn" => LogSeverity.Warning, "debug" => LogSeverity.Debug, _ => LogSeverity.Info };
+    var message = r.Message ?? "";
+    if (message.Length > 4000) message = message[..4000] + "...";
+    Log.Write(level, "[page] " + message, null);
+    return Results.Ok();
+});
 api.MapPost("/quit", (IHostApplicationLifetime life) =>
 {
     _ = Task.Delay(300).ContinueWith(_ => life.StopApplication());
@@ -118,14 +148,16 @@ api.MapPost("/quit", (IHostApplicationLifetime life) =>
 await app.StartAsync();
 var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
 var url = $"{address}/?t={token}";
+Log.Info("Interface : " + address); // sans le jeton
 try
 {
     Directory.CreateDirectory(AppPaths.Data);
     File.WriteAllText(Path.Combine(AppPaths.Data, "adresse.txt"), url);
 }
-catch
+catch (Exception ex)
 {
-    // pas grave
+    // Ne sert qu'a retrouver l'adresse si aucune fenetre ne s'ouvre
+    Log.Warn("adresse.txt non ecrit", ex);
 }
 
 if (!noWindow)
@@ -148,6 +180,7 @@ if (!noWindow)
             var silent = state.EverPinged && DateTime.UtcNow - state.LastPing > TimeSpan.FromMinutes(3);
             if (windowClosed || leftPage || silent)
             {
+                Log.Info(windowClosed ? "Fenetre fermee : arret" : leftPage ? "Page quittee : arret" : "Plus de nouvelles de la page depuis 3 minutes : arret");
                 app.Lifetime.StopApplication();
                 break;
             }
@@ -161,6 +194,7 @@ else
 
 await app.WaitForShutdownAsync();
 state.Dispose();
+Log.End();
 
 static IResult Asset(string name)
 {
@@ -210,21 +244,26 @@ internal static class WindowLauncher
                     psi.ArgumentList.Add("--no-first-run");
                     psi.ArgumentList.Add("--no-default-browser-check");
                     psi.ArgumentList.Add("--disable-features=Translate");
-                    return Process.Start(psi);
+                    var process = Process.Start(psi);
+                    Log.Info("Fenetre ouverte avec " + exe);
+                    return process;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // on essaie le suivant
+                    // On essaie le navigateur suivant
+                    Log.Warn($"Ouverture de la fenetre avec {exe} impossible", ex);
                 }
             }
         }
         try
         {
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            Log.Info("Fenetre ouverte avec le navigateur par defaut");
         }
-        catch
+        catch (Exception ex)
         {
-            // aucun navigateur : l'adresse est dans adresse.txt
+            // Aucun navigateur : l'adresse reste dans adresse.txt
+            Log.Error("Aucun navigateur n'a pu ouvrir l'interface (adresse dans adresse.txt)", ex);
         }
         return null;
     }

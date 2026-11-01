@@ -151,6 +151,7 @@ public static class UiText
             var name = Path.GetFileName(res);
             var pack = Parse(Path.GetFileNameWithoutExtension(res).ToLowerInvariant(), reader.ReadToEnd(), "builtin", name);
             if (pack.Error == null) packs[pack.Code] = pack;
+            else Log.WarnOnce($"Langue integree illisible : {name} ({pack.Error})"); // erreur de compilation du projet
         }
 
         try
@@ -166,6 +167,7 @@ public static class UiText
                     {
                         pack = new Pack(code, name, "", "file", name, new Dictionary<string, string>(), "badname");
                         packs["?" + name] = pack;
+                        Log.WarnOnce($"Fichier de langue ignore : {file} (le nom n'est pas un code de langue)");
                         continue;
                     }
                     try
@@ -176,15 +178,17 @@ public static class UiText
                     {
                         pack = new Pack(code, name, "", "file", name, new Dictionary<string, string>(), ex.Message);
                     }
+                    if (pack.Error != null) Log.WarnOnce($"Fichier de langue ignore : {file} ({pack.Error})");
                     // un fichier casse ne remplace pas la version integree qui marche
                     if (pack.Error != null) packs["?" + name] = pack;
                     else packs[code] = pack;
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // dossier illisible : on garde les langues integrees
+            // Dossier illisible : on garde les langues integrees
+            Log.WarnOnce($"Dossier des langues illisible : {Folder}", ex);
         }
         return packs.Values.ToList();
     }
@@ -213,3 +217,31 @@ public static class UiText
         }
     }
 }
+
+/// <summary>
+/// Texte traduit au moment ou on l'affiche (cle + valeurs), pas au moment ou on le cree : les remarques d'analyse
+/// suivent ainsi la langue de l'interface, meme si on la change apres avoir ouvert le mod.
+/// </summary>
+public sealed class LocText
+{
+    private readonly string _key;
+    private readonly object?[] _args;
+    private readonly LocText? _next;
+
+    public LocText(string key, params object?[] args) : this(key, args, null)
+    {
+    }
+
+    private LocText(string key, object?[] args, LocText? next)
+    {
+        _key = key;
+        _args = args;
+        _next = next;
+    }
+
+    /// <summary>Ce texte suivi d'un autre ("le .xl declare un fichier fr-fr" + " (via la liste des sous-titres)").</summary>
+    public LocText Then(LocText next) => new(_key, _args, _next == null ? next : _next.Then(next));
+
+    public override string ToString() => UiText.T(_key, _args) + _next;
+}
+

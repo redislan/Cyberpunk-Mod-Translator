@@ -52,6 +52,7 @@ public static class Tsv
         }
         catch (DecoderFallbackException)
         {
+            Log.Info($"{path} : pas en UTF-8, lu en Windows-1252 (TSV reenregistre par Excel ?)");
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
             return Encoding.GetEncoding(1252).GetString(bytes);
         }

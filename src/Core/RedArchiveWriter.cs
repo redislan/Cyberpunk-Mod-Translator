@@ -138,8 +138,10 @@ public static class RedArchiveWriter
         {
             packed = compressor.Compress(data);
         }
-        catch
+        catch (Exception ex)
         {
+            // Le fichier sera simplement stocke sans compression (le jeu le lit aussi)
+            Log.Warn($"Compression impossible ({data.Length} octets) : donnees stockees sans compression", ex);
             packed = null;
         }
         if (packed == null || packed.Length == 0 || data.Length <= packed.Length + 8) return data;

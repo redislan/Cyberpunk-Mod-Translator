@@ -4,15 +4,31 @@ using CyberpunkModTranslator.Core;
 namespace CyberpunkModTranslator.Cli;
 
 /// <summary>
-/// Version en ligne de commande du moteur, en attendant l'interface.
-///   cmt analyser   &lt;mod&gt;
-///   cmt exporter   &lt;mod&gt; &lt;fichier.tsv&gt; [--depuis &lt;trad existante&gt;]
-///   cmt construire &lt;mod&gt; (&lt;fichier.tsv&gt; | --depuis &lt;trad existante&gt;) &lt;dossier de sortie&gt;
-///   cmt lister     &lt;fichier.archive&gt;
-/// Options : --jeu &lt;dossier de Cyberpunk 2077&gt;  --oodle &lt;dll&gt;  --langue fr-fr  --sans-compression
+/// Version en ligne de commande du moteur.
+///   cmt analyze  &lt;mod&gt;                                   (ou : analyser)
+///   cmt export   &lt;mod&gt; &lt;fichier.tsv&gt; [--from &lt;trad&gt;] [--all] (ou : exporter, --depuis, --tout)
+///   cmt build    &lt;mod&gt; (&lt;fichier.tsv&gt; | --from &lt;trad&gt;) &lt;dossier de sortie&gt; (ou : construire)
+///   cmt list     &lt;fichier.archive&gt;                         (ou : lister)
+/// Options : --game &lt;dossier de Cyberpunk 2077&gt; (--jeu)  --oodle &lt;dll&gt;  --lang fr-fr (--langue)
+///           --no-compression (--sans-compression)  --ui en|fr  --debug
+/// Les messages suivent la langue de Windows (ou --ui), comme l'interface.
+/// Journal : %AppData%\CyberpunkModTranslator\logs\cmt_*.log
 /// </summary>
 public static class Program
 {
+    /// <summary>Noms francais des options (versions precedentes) vers les noms anglais.</summary>
+    private static readonly Dictionary<string, string> OptionAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["jeu"] = "game",
+        ["langue"] = "lang",
+        ["depuis"] = "from",
+        ["tout"] = "all",
+        ["sans-compression"] = "no-compression",
+        ["aide"] = "help",
+    };
+
+    private static readonly HashSet<string> Flags = new(StringComparer.OrdinalIgnoreCase) { "no-compression", "help", "all", "debug" };
+
     public static int Main(string[] args)
     {
         Console.OutputEncoding = Encoding.UTF8;
@@ -23,7 +39,8 @@ public static class Program
             if (args[i].StartsWith("--"))
             {
                 var name = args[i][2..];
-                if (name is "sans-compression" or "aide" or "tout") options[name] = "1";
+                if (OptionAliases.TryGetValue(name, out var english)) name = english;
+                if (Flags.Contains(name)) options[name] = "1";
                 else options[name] = i + 1 < args.Length ? args[++i] : null;
             }
             else
@@ -32,52 +49,50 @@ public static class Program
             }
         }
 
-        if (positional.Count == 0 || options.ContainsKey("aide"))
+        UiText.Use(options.GetValueOrDefault("ui"));
+
+        if (positional.Count == 0 || options.ContainsKey("help") || positional[0] is "help" or "aide")
         {
-            PrintHelp();
+            Console.WriteLine(UiText.T("cli.help", Log.DefaultFolder));
             return 0;
         }
 
+        var command = positional[0].ToLowerInvariant() switch
+        {
+            "analyze" or "analyse" or "analyser" => "analyze",
+            "export" or "exporter" => "export",
+            "build" or "construire" => "build",
+            "list" or "lister" => "list",
+            _ => null,
+        };
+        if (command == null) return Fail(UiText.T("cli.unknownCommand", positional[0]) + "\n\n" + UiText.T("cli.help", Log.DefaultFolder));
+
+        if (options.ContainsKey("debug")) Log.DebugEnabled = true;
+        Log.Start("cmt");
+        Log.Info("Commande : cmt " + string.Join(" ", args));
         try
         {
-            using var compressor = Compressors.Load(options.GetValueOrDefault("oodle"), options.GetValueOrDefault("jeu"));
-            var lang = options.GetValueOrDefault("langue") ?? "fr-fr";
-            return positional[0].ToLowerInvariant() switch
+            using var compressor = Compressors.Load(options.GetValueOrDefault("oodle"), options.GetValueOrDefault("game"));
+            var lang = options.GetValueOrDefault("lang") ?? "fr-fr";
+            return command switch
             {
-                "analyser" => Analyse(positional, compressor, lang),
-                "exporter" => Export(positional, options, compressor, lang),
-                "construire" => Build(positional, options, compressor, lang),
-                "lister" => List(positional, compressor),
-                _ => Fail("Commande inconnue : " + positional[0]),
+                "analyze" => Analyse(positional, compressor, lang),
+                "export" => Export(positional, options, compressor, lang),
+                "build" => Build(positional, options, compressor, lang),
+                _ => List(positional, compressor),
             };
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine("ERREUR : " + ex.Message);
+            Log.Error("Commande echouee", ex);
+            Console.Error.WriteLine(UiText.T("cli.error", ex.Message));
+            if (Log.FilePath != null) Console.Error.WriteLine(UiText.T("cli.logDetail", Log.FilePath));
             return 1;
         }
-    }
-
-    private static void PrintHelp()
-    {
-        Console.WriteLine("""
-            Cyberpunk Mod Translator - moteur (ligne de commande)
-
-              cmt analyser   <mod>
-                  Montre les textes trouves dans le mod et ce qui sera traduit.
-              cmt exporter   <mod> <fichier.tsv> [--depuis <trad existante>] [--tout]
-                  Ecrit les lignes dans un fichier TSV (colonne "francais" a remplir).
-                  Statuts : "a traduire", "a verifier" (peut-etre du texte), "deja traduit".
-                  --tout ajoute aussi les chaines classees "code" (identifiants, chemins...).
-              cmt construire <mod> <fichier.tsv> <dossier de sortie>
-              cmt construire <mod> --depuis <trad existante> <dossier de sortie>
-                  Fabrique le patch "#<archive>_FR.archive" et un zip a installer dans MO2.
-              cmt lister     <fichier.archive>
-                  Liste le contenu d'une archive.
-
-            <mod> = dossier du mod (par exemple dans MO2\mods) ou .zip telecharge sur Nexus.
-            Options : --jeu <dossier de Cyberpunk 2077>   --langue fr-fr   --sans-compression
-            """);
+        finally
+        {
+            Log.End();
+        }
     }
 
     private static int Fail(string message)
@@ -88,26 +103,29 @@ public static class Program
 
     private static int Analyse(List<string> p, ICompressor compressor, string lang)
     {
-        if (p.Count < 2) return Fail("Usage : cmt analyser <mod>");
+        if (p.Count < 2) return Fail(UiText.T("cli.usage.analyze"));
         using var project = TranslationProject.Scan(p[1], compressor, lang);
-        Console.WriteLine($"Mod : {project.Mod.Name}");
-        Console.WriteLine($"Compresseur : {compressor.Name}");
+        Console.WriteLine(UiText.T("cli.mod", project.Mod.Name));
+        Console.WriteLine(UiText.T("cli.compressor", compressor.Name));
         Console.WriteLine();
         foreach (var t in project.Targets)
         {
             var units = project.Units.Where(u => u.Loc == t).ToList();
             var todo = units.Count(u => u.Status == UnitStatus.ToTranslate);
             var done = units.Count - todo;
-            Console.WriteLine($"[{t.ArchiveName}] {(t.Kind == LocKind.OnScreens ? "textes" : "sous-titres")}");
-            Console.WriteLine($"   anglais  : {t.SourcePath}");
-            Console.WriteLine($"   a ecrire : {t.TargetPath}{(t.TargetExists ? "" : " (nouveau fichier)")}");
-            Console.WriteLine($"   pourquoi : {t.Reason}");
-            Console.WriteLine($"   lignes   : {units.Count} ({todo} a traduire, {done} deja traduites)");
+            Console.WriteLine($"[{t.ArchiveName}] {UiText.T(t.Kind == LocKind.OnScreens ? "cli.kind.onscreens" : "cli.kind.subtitles")}");
+            Console.WriteLine(UiText.T("cli.loc.source", t.SourcePath));
+            Console.WriteLine(UiText.T("cli.loc.target", t.TargetPath, t.TargetExists ? "" : UiText.T("cli.loc.newFile")));
+            Console.WriteLine(UiText.T("cli.loc.reason", t.Reason));
+            Console.WriteLine(UiText.T("cli.loc.lines", units.Count, todo, done));
             foreach (var u in units.Take(3))
                 Console.WriteLine($"      {u.Key} : {Short(u.Source)}");
         }
         if (project.ArchivesWithoutText.Count > 0)
-            Console.WriteLine($"\nArchives sans texte : {string.Join(", ", project.ArchivesWithoutText)}");
+        {
+            Console.WriteLine();
+            Console.WriteLine(UiText.T("cli.noTextArchives", string.Join(", ", project.ArchivesWithoutText)));
+        }
         foreach (var pt in project.PlainTargets)
         {
             var units = project.Units.Where(u => u.Plain == pt).ToList();
@@ -116,70 +134,70 @@ public static class Program
             var code = units.Count(u => u.Status == UnitStatus.Code);
             if (text + check == 0)
             {
-                Console.WriteLine($"[{pt.RelativePath}] aucun texte ({code} chaines de code)");
+                Console.WriteLine(UiText.T("cli.plain.none", pt.RelativePath, code));
                 continue;
             }
             Console.WriteLine($"[{pt.RelativePath}]");
-            Console.WriteLine($"   chaines   : {text} texte(s), {check} a verifier, {code} de code (ignorees)");
+            Console.WriteLine(UiText.T("cli.plain.counts", text, check, code));
             foreach (var u in units.Where(u => u.Status != UnitStatus.Code).Take(4))
                 Console.WriteLine($"      {(u.Status == UnitStatus.ToCheck ? "?" : " ")} {Short(u.Source)}");
         }
         var linked = project.Units.Where(u => u.LinkedCode.Count > 0).ToList();
         if (linked.Count > 0)
         {
-            Console.WriteLine("\nTextes qui servent aussi d'identifiants (leur traduction sera reportee dans le code) :");
+            Console.WriteLine();
+            Console.WriteLine(UiText.T("cli.linked"));
             foreach (var u in linked)
                 Console.WriteLine($"   {Short(u.Source)}  ->  {string.Join(" ; ", u.LinkedCode.Select(TranslationProject.Where))}");
         }
-        foreach (var n in project.Notes) Console.WriteLine("Note : " + n);
+        foreach (var n in project.Notes) Console.WriteLine(UiText.T("cli.note", n));
         return 0;
     }
 
     private static int Export(List<string> p, Dictionary<string, string?> o, ICompressor compressor, string lang)
     {
-        if (p.Count < 3) return Fail("Usage : cmt exporter <mod> <fichier.tsv> [--depuis <trad existante>]");
+        if (p.Count < 3) return Fail(UiText.T("cli.usage.export"));
         using var project = TranslationProject.Scan(p[1], compressor, lang);
-        if (o.TryGetValue("depuis", out var from) && from != null)
-            Console.WriteLine($"{project.ImportFromTranslationMod(from)} ligne(s) reprise(s) de {from}");
-        var all = o.ContainsKey("tout");
+        if (o.TryGetValue("from", out var from) && from != null)
+            Console.WriteLine(UiText.T("cli.imported", project.ImportFromTranslationMod(from), from));
+        var all = o.ContainsKey("all");
         project.ExportTsv(p[2], all);
         var written = project.Units.Count(u => all || u.Status != UnitStatus.Code || u.Translation != null);
-        Console.WriteLine($"{written} ligne(s) ecrite(s) dans {p[2]}{(all ? "" : " (chaines de code exclues, --tout pour les inclure)")}");
+        Console.WriteLine(UiText.T("cli.written", written, p[2]) + (all ? "" : UiText.T("cli.codeExcluded")));
         return 0;
     }
 
     private static int Build(List<string> p, Dictionary<string, string?> o, ICompressor compressor, string lang)
     {
-        var from = o.GetValueOrDefault("depuis");
-        if (p.Count < (from != null ? 3 : 4))
-            return Fail("Usage : cmt construire <mod> <fichier.tsv> <dossier>  ou  cmt construire <mod> --depuis <trad> <dossier>");
+        var from = o.GetValueOrDefault("from");
+        if (p.Count < (from != null ? 3 : 4)) return Fail(UiText.T("cli.usage.build"));
         using var project = TranslationProject.Scan(p[1], compressor, lang);
         if (from != null)
         {
-            Console.WriteLine($"{project.ImportFromTranslationMod(from)} ligne(s) reprise(s) de {from}");
+            Console.WriteLine(UiText.T("cli.imported", project.ImportFromTranslationMod(from), from));
         }
         else
         {
             var (applied, warnings) = project.ImportTsv(p[2]);
-            Console.WriteLine($"{applied} ligne(s) lue(s) dans {p[2]}");
-            foreach (var w in warnings) Console.WriteLine("Attention : " + w);
+            Console.WriteLine(UiText.T("cli.read", applied, p[2]));
+            foreach (var w in warnings) Console.WriteLine(UiText.T("cli.warning", w));
         }
         var output = from != null ? p[2] : p[3];
-        var result = project.Build(output, o.ContainsKey("sans-compression") ? null : compressor);
-        foreach (var w in result.Warnings) Console.WriteLine("Attention : " + w);
-        foreach (var i in result.Infos) Console.WriteLine("Info : " + i);
-        Console.WriteLine($"{result.ChangedLines} ligne(s) traduite(s)");
-        foreach (var a in result.Archives) Console.WriteLine("Archive : " + a);
-        foreach (var f in result.PlainFiles) Console.WriteLine("Fichier : " + f);
-        if (result.Zip != null) Console.WriteLine("A installer dans MO2 : " + result.Zip);
+        var result = project.Build(output, o.ContainsKey("no-compression") ? null : compressor);
+        foreach (var w in result.Warnings) Console.WriteLine(UiText.T("cli.warning", w));
+        foreach (var i in result.Infos) Console.WriteLine(UiText.T("cli.info", i));
+        Console.WriteLine(UiText.T("cli.changed", result.ChangedLines));
+        foreach (var a in result.Archives) Console.WriteLine(UiText.T("cli.archive", a));
+        foreach (var f in result.PlainFiles) Console.WriteLine(UiText.T("cli.file", f));
+        if (result.Zip != null) Console.WriteLine(UiText.T("cli.install", result.Zip));
         return result.Archives.Count + result.PlainFiles.Count > 0 ? 0 : 1;
     }
 
     private static int List(List<string> p, ICompressor compressor)
     {
-        if (p.Count < 2) return Fail("Usage : cmt lister <fichier.archive>");
+        if (p.Count < 2) return Fail(UiText.T("cli.usage.list"));
         using var ar = RedArchive.Open(p[1], compressor);
-        Console.WriteLine($"{Path.GetFileName(p[1])} : {ar.Files.Count} fichier(s), {ar.CustomPaths.Count} nom(s) connus");
+        Console.WriteLine(UiText.T("cli.list.header", Path.GetFileName(p[1]), ar.Files.Count, ar.CustomPaths.Count));
         foreach (var e in ar.Files.OrderBy(f => f.Display, StringComparer.OrdinalIgnoreCase))
         {
             var info = "";
@@ -188,13 +206,14 @@ public static class Program
                 var data = ar.ReadMain(e);
                 info = Cr2wFile.LooksLikeCr2w(data) ? Cr2wFile.Parse(data).RootClass : "";
                 var loc = LocalizationFile.TryLoad(data);
-                if (loc != null) info += $" ({loc.Entries.Count} lignes de texte)";
+                if (loc != null) info += UiText.T("cli.list.lines", loc.Entries.Count);
             }
             catch (Exception ex)
             {
-                info = "illisible : " + ex.Message;
+                Log.Warn($"lister : {e.Display} illisible", ex);
+                info = UiText.T("cli.list.unreadable", ex.Message);
             }
-            Console.WriteLine($"   {e.Display}  {e.Size:N0} o  {info}");
+            Console.WriteLine($"   {e.Display}  {UiText.T("cli.list.size", e.Size.ToString("N0"))}  {info}");
         }
         return 0;
     }

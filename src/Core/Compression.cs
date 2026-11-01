@@ -49,6 +49,7 @@ public sealed class OodleDll : ICompressor
 
     public byte[] Decompress(byte[] source, int rawSize)
     {
+        Compressors.CheckSize(rawSize);
         var output = new byte[rawSize];
         var r = _decompress(source, source.Length, output, rawSize, 1, 0, 0,
             IntPtr.Zero, 0, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, 3);
@@ -96,6 +97,7 @@ public sealed class KrakenLib : ICompressor
 
     public byte[] Decompress(byte[] source, int rawSize)
     {
+        Compressors.CheckSize(rawSize);
         var output = new byte[rawSize + 64];
         var r = _decompress(source, (nuint)source.Length, output, (nuint)rawSize);
         if (r != rawSize)
@@ -115,6 +117,13 @@ public sealed class KrakenLib : ICompressor
 
 public static class Compressors
 {
+    /// <summary>Refuse une taille decompressee negative ou demesuree (lue dans un fichier abime ou piege).</summary>
+    internal static void CheckSize(int rawSize)
+    {
+        if (rawSize < 0 || rawSize > RedArchive.MaxFileSize)
+            throw new InvalidDataException(UiText.T("core.badSize", rawSize));
+    }
+
     /// <summary>
     /// Charge le compresseur : chemin explicite (DLL Oodle ou libkraken), sinon la DLL Oodle du jeu trouvee automatiquement.
     /// </summary>

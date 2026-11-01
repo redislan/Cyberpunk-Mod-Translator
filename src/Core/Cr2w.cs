@@ -267,8 +267,10 @@ public sealed class Cr2wFile
                 var (cls, consumed) = ReadStruct(className, start, end);
                 Chunks.Add(new Cr2wChunk { ClassName = className, Data = cls, Tail = _data[consumed..end] });
             }
-            catch
+            catch (Exception ex)
             {
+                // Bloc non decodable : il est garde tel quel (et reecrit a l'identique)
+                Log.Debug($"CR2W : bloc {className} garde en brut ({ex.Message})");
                 Chunks.Add(new Cr2wChunk { ClassName = className, RawData = _data[start..end] });
             }
         }
@@ -335,9 +337,10 @@ public sealed class Cr2wFile
                 if (next == end) return s;
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // pas decodable : on garde les octets bruts
+            // Valeur non decodable : on garde les octets bruts (reecrits a l'identique)
+            Log.Debug($"CR2W : valeur {type} gardee en brut ({ex.Message})");
         }
         return new RedRaw(_data[o..end]);
     }

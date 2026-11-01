@@ -54,9 +54,10 @@ public sealed class ModPackage : IDisposable
         {
             Directory.Delete(_tempDir, true);
         }
-        catch
+        catch (Exception ex)
         {
-            // dossier temporaire : pas grave s'il reste
+            // Pas bloquant : Windows videra le dossier temporaire plus tard
+            Log.Warn($"Dossier temporaire non supprime : {_tempDir}", ex);
         }
     }
 }

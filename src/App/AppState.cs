@@ -21,7 +21,7 @@ public static class AppPaths
 
     public static string Projects => Path.Combine(Data, "projets");
     public static string SettingsFile => Path.Combine(Data, "reglages.json");
-    public static string LogFile => Path.Combine(Data, "journal.txt");
+    public static string Logs => Path.Combine(Data, "logs");
 
     public static string Downloads => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
 }
@@ -40,6 +40,7 @@ public sealed class Settings
 public record PathRequest(string Path, string? Name = null);
 public record TranslationUpdate(int Id, string? Fr);
 public record LinkUpdate(int Id, bool Apply);
+public record ClientLog(string? Level, string? Message);
 
 /// <summary>Etat de l'appli : reglages, compresseur Oodle, projet de traduction ouvert.</summary>
 public sealed class AppState : IDisposable
@@ -69,7 +70,11 @@ public sealed class AppState : IDisposable
         if (string.IsNullOrEmpty(Settings.GameDir))
             Settings.GameDir = GameLocator.FindGameDirectories().FirstOrDefault() ?? "";
         UiText.Use(Settings.UiLang);
+        Log.Info($"Reglages : jeu = {Show(Settings.GameDir)}, mods MO2 = {Show(Settings.Mo2ModsDir)}, sortie = {Show(Settings.OutputDir)}, " +
+                 $"langue cible = {Settings.Lang}, interface = {UiText.Current} ({Show(Settings.UiLang, "auto")})");
     }
+
+    private static string Show(string? value, string empty = "(vide)") => string.IsNullOrWhiteSpace(value) ? empty : value;
 
     // -----------------------------------------------------------------------------------------
     // Vie de l'appli
@@ -88,18 +93,6 @@ public sealed class AppState : IDisposable
         ByeAt = DateTime.UtcNow;
     }
 
-    public void Log(Exception ex)
-    {
-        try
-        {
-            File.AppendAllText(AppPaths.LogFile, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {ex}\n\n");
-        }
-        catch
-        {
-            // pas de journal possible : tant pis
-        }
-    }
-
     private ICompressor GetCompressor()
     {
         if (_compressor != null) return _compressor;
@@ -107,10 +100,13 @@ public sealed class AppState : IDisposable
         {
             _compressor = Compressors.Load(_forcedOodle, Settings.GameDir);
             _compressorError = null;
+            Log.Info("Compression : " + _compressor.Name);
             return _compressor;
         }
         catch (Exception ex)
         {
+            // L'etat est redemande souvent : on ne journalise que quand l'erreur change
+            if (_compressorError != ex.Message) Log.Warn("DLL de compression du jeu introuvable", ex);
             _compressorError = ex.Message;
             throw new InvalidOperationException(UiText.T("core.noDll"));
         }
@@ -127,9 +123,19 @@ public sealed class AppState : IDisposable
             if (File.Exists(AppPaths.SettingsFile))
                 return JsonSerializer.Deserialize<Settings>(File.ReadAllText(AppPaths.SettingsFile)) ?? new Settings();
         }
-        catch
+        catch (Exception ex)
         {
-            // reglages illisibles : on repart des valeurs par defaut
+            // Reglages illisibles : on repart des valeurs par defaut, mais on garde une copie du fichier abime
+            Log.Error($"Reglages illisibles ({AppPaths.SettingsFile}) : valeurs par defaut utilisees", ex);
+            try
+            {
+                File.Copy(AppPaths.SettingsFile, Path.Combine(AppPaths.Data, "reglages.illisible.json"), true);
+                Log.Info("Copie du fichier abime : reglages.illisible.json");
+            }
+            catch (Exception copyError)
+            {
+                Log.Warn("Copie des reglages abimes impossible", copyError);
+            }
         }
         return new Settings();
     }
@@ -151,6 +157,8 @@ public sealed class AppState : IDisposable
             Settings.Lang = string.IsNullOrWhiteSpace(s.Lang) ? "fr-fr" : s.Lang.Trim();
             Settings.UiLang = (s.UiLang ?? "").Trim().ToLowerInvariant();
             UiText.Use(Settings.UiLang);
+            Log.Info($"Reglages modifies : jeu = {Show(Settings.GameDir)}, mods MO2 = {Show(Settings.Mo2ModsDir)}, sortie = {Show(Settings.OutputDir)}, " +
+                     $"langue cible = {Settings.Lang}, interface = {UiText.Current} ({Show(Settings.UiLang, "auto")})");
             if (gameChanged && _forcedOodle == null)
             {
                 _compressor?.Dispose();
@@ -176,6 +184,7 @@ public sealed class AppState : IDisposable
             }
             catch
             {
+                // deja ecrit dans le journal par GetCompressor ; l'interface affiche le bandeau
                 compressor = "";
             }
             return new
@@ -202,7 +211,7 @@ public sealed class AppState : IDisposable
                 src = g.Key.SourceName,
                 file = g.Key.FilePath,
                 kind = g.First().Loc != null ? (g.First().Loc!.Kind == LocKind.Subtitles ? "subtitles" : "texts") : "file",
-                reason = g.First().Loc?.Reason ?? UiText.T("reason.plainFile"),
+                reason = g.First().Loc?.Reason.ToString() ?? UiText.T("reason.plainFile"),
                 total = g.Count(),
             })
             .ToList();
@@ -213,7 +222,7 @@ public sealed class AppState : IDisposable
             lang = _project.TargetLang,
             suffix = TranslationProject.LangSuffix(_project.TargetLang),
             files,
-            notes = _project.Notes,
+            notes = _project.Notes.Select(n => n.ToString()).ToList(),
             archivesWithoutText = _project.ArchivesWithoutText,
             restored = _restored,
             saveFile = ProjectFile(),
@@ -273,6 +282,7 @@ public sealed class AppState : IDisposable
                 _restored = _project.Units.Count(u => u.HasChange);
             }
 
+            Log.Info($"Mod ouvert : {_project.Mod.Name} ({_project.Units.Count} chaines, {_restored} traduction(s) reprises de la sauvegarde)");
             Settings.RecentMods.RemoveAll(p => string.Equals(p, _projectPath, StringComparison.OrdinalIgnoreCase));
             Settings.RecentMods.Insert(0, _projectPath);
             if (Settings.RecentMods.Count > 10) Settings.RecentMods.RemoveRange(10, Settings.RecentMods.Count - 10);
@@ -408,6 +418,7 @@ public sealed class AppState : IDisposable
             Directory.CreateDirectory(dir);
             var file = Path.Combine(dir, TranslationProject.SafeName(p.Mod.Name) + ".tsv");
             p.ExportTsv(file);
+            Log.Info("TSV exporte : " + file);
             return new { file };
         }
     }
@@ -457,9 +468,10 @@ public sealed class AppState : IDisposable
         {
             if (string.IsNullOrWhiteSpace(places[1])) places.AddRange(GameLocator.FindGameDirectories().Take(1));
         }
-        catch
+        catch (Exception ex)
         {
-            // pas grave
+            // Simple raccourci en moins dans la fenetre Ouvrir
+            Log.Warn("Dossier du jeu non ajoute aux raccourcis", ex);
         }
         try
         {
@@ -468,7 +480,7 @@ public sealed class AppState : IDisposable
         }
         catch (Exception e)
         {
-            Log(e);
+            Log.Error("Fenetre Ouvrir de Windows impossible : explorateur integre a la place", e);
             return new { unsupported = true, error = e.Message };
         }
     }
@@ -527,9 +539,10 @@ public sealed class AppState : IDisposable
                 entries.Add(new { name = f.Name, path = f.FullName, type = "file", isMod = false });
             }
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException ex)
         {
-            // dossier protege : on affiche ce qu'on a
+            // Dossier protege : on affiche ce qu'on a pu lire
+            Log.Debug($"Explorateur integre : {current} en partie illisible ({ex.Message})");
         }
         return new { path = current, parent, entries, places };
     }
@@ -543,8 +556,9 @@ public sealed class AppState : IDisposable
                    Directory.Exists(Path.Combine(d.FullName, "bin")) ||
                    Directory.Exists(Path.Combine(d.FullName, "red4ext"));
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Debug($"Explorateur integre : {d.FullName} illisible ({ex.Message})");
             return false;
         }
     }
@@ -566,9 +580,9 @@ public sealed class AppState : IDisposable
             {
                 if (_project != null) SaveProject();
             }
-            catch
+            catch (Exception ex)
             {
-                // derniere sauvegarde impossible
+                Log.Error("Derniere sauvegarde du travail impossible a la fermeture", ex);
             }
             _project?.Dispose();
             _compressor?.Dispose();

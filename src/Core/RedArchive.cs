@@ -32,6 +32,20 @@ public sealed class RedArchive : IDisposable
     public const uint Magic = 0x52414452; // "RDAR"
     public const uint LxrsMagic = 0x4C585253; // "LXRS"
     public const int ExtendedHeaderSize = 0xAC;
+
+    /// <summary>
+    /// Plus gros fichier qu'on accepte de lire (1 Go). Les tailles viennent de l'archive elle-meme : une archive abimee ou
+    /// piegee pourrait sinon demander une allocation de plusieurs Go et faire planter l'outil.
+    /// </summary>
+    public const long MaxFileSize = 1L << 30;
+
+    /// <summary>Plus grosse liste de chemins (LXRS) acceptee.</summary>
+    public const int MaxNameListSize = 64 << 20;
+
+    private const int IndexHeaderSize = 28;
+    private const int FileEntrySize = 56;
+    private const int SegmentEntrySize = 16;
+    private const int DependencyEntrySize = 8;
     private static readonly byte[] Kark = "KARK"u8.ToArray();
 
     private readonly FileStream _stream;
@@ -83,6 +97,9 @@ public sealed class RedArchive : IDisposable
         if (customLength > 0)
             ReadLxrs(br);
 
+        var length = _stream.Length;
+        if (indexPosition < 0x28 || indexPosition > (ulong)(length - IndexHeaderSize))
+            throw Bad($"index at {indexPosition}, file size {length}");
         _stream.Position = (long)indexPosition;
         br.ReadUInt32(); // offset de la table
         br.ReadUInt32(); // taille de la table
@@ -90,6 +107,9 @@ public sealed class RedArchive : IDisposable
         var fileCount = br.ReadUInt32();
         var segmentCount = br.ReadUInt32();
         var dependencyCount = br.ReadUInt32();
+        var tableSize = (long)fileCount * FileEntrySize + (long)segmentCount * SegmentEntrySize + (long)dependencyCount * DependencyEntrySize;
+        if (tableSize > length - (long)indexPosition - IndexHeaderSize)
+            throw Bad($"{fileCount} files, {segmentCount} segments, {dependencyCount} dependencies: more than the file holds");
 
         for (var i = 0; i < fileCount; i++)
         {
@@ -129,6 +149,11 @@ public sealed class RedArchive : IDisposable
         var size = br.ReadInt32();
         var zsize = br.ReadInt32();
         var count = br.ReadInt32();
+        if (size < 0 || zsize < 0 || count < 0 || size > MaxNameListSize || zsize > _stream.Length - _stream.Position)
+        {
+            Log.Warn($"{FilePath} : liste des chemins (LXRS) incoherente (taille {size}, compressee {zsize}, {count} noms), ignoree");
+            return;
+        }
         var data = br.ReadBytes(zsize);
         byte[] buffer = data;
         if (size != zsize)
@@ -137,9 +162,11 @@ public sealed class RedArchive : IDisposable
             {
                 buffer = _compressor.Decompress(data, size);
             }
-            catch
+            catch (Exception ex)
             {
-                return; // liste de noms illisible : les fichiers resteront identifies par leur hash
+                // Liste de noms illisible : les fichiers resteront identifies par leur hash
+                Log.Warn($"{FilePath} : liste des chemins (LXRS) illisible, fichiers identifies par leur hash", ex);
+                return;
             }
         }
         var latin1 = Encoding.Latin1;
@@ -154,7 +181,11 @@ public sealed class RedArchive : IDisposable
 
     public byte[] ReadSegment(int index)
     {
+        if (index < 0 || index >= Segments.Count) throw Bad($"segment {index} of {Segments.Count}");
         var seg = Segments[index];
+        if (seg.Offset > (ulong)_stream.Length || seg.ZSize > (ulong)_stream.Length - seg.Offset)
+            throw Bad($"segment {index} outside the file (offset {seg.Offset}, size {seg.ZSize})");
+        if (seg.Size > MaxFileSize) throw Bad($"segment {index}: {seg.Size} bytes once unpacked");
         var raw = new byte[seg.ZSize];
         lock (_stream)
         {
@@ -165,6 +196,7 @@ public sealed class RedArchive : IDisposable
         if (raw.Length >= 8 && raw.AsSpan(0, 4).SequenceEqual(Kark))
         {
             var realSize = BitConverter.ToInt32(raw, 4);
+            if (realSize < 0 || realSize > MaxFileSize) throw Bad($"segment {index}: {realSize} bytes once unpacked");
             return _compressor.Decompress(raw[8..], realSize);
         }
         return raw;
@@ -172,6 +204,8 @@ public sealed class RedArchive : IDisposable
 
     /// <summary>Le fichier principal (pour un CR2W : le fichier sans ses buffers externes).</summary>
     public byte[] ReadMain(ArchiveEntry entry) => ReadSegment((int)entry.SegmentsStart);
+
+    private InvalidDataException Bad(string detail) => new(UiText.T("core.badArchive", Path.GetFileName(FilePath), detail));
 
     public static string ShortSha1(byte[] data) => Convert.ToHexString(SHA1.HashData(data))[..12].ToLowerInvariant();
 

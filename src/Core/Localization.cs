@@ -54,8 +54,10 @@ public sealed class LocalizationFile
         {
             cr2w = Cr2wFile.Parse(data);
         }
-        catch
+        catch (Exception ex)
         {
+            // Courant (fichiers CR2W qui ne sont pas des textes) : l'analyse signale a part un vrai fichier de textes illisible
+            Log.Debug($"CR2W illisible, ignore comme fichier de textes ({ex.Message})");
             return null;
         }
 
@@ -113,8 +115,9 @@ public sealed class LocalizationFile
         {
             cr2w = Cr2wFile.Parse(data);
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Debug($"CR2W illisible, ignore comme carte de sous-titres ({ex.Message})");
             return null;
         }
         var chunk = cr2w.Chunks.FirstOrDefault(c => c.ClassName == "localizationPersistenceSubtitleMap");

@@ -26,7 +26,7 @@ public sealed class LocTarget
     public string SourcePath { get; init; } = "";
     public string TargetPath { get; init; } = "";
     public bool TargetExists { get; init; }
-    public string Reason { get; init; } = "";
+    public LocText Reason { get; init; } = new("reason.plainFile");
     public LocalizationFile Source { get; init; } = null!;
     public byte[] TemplateBytes { get; init; } = Array.Empty<byte>();
     public LocalizationFile Template { get; init; } = null!;
@@ -105,7 +105,7 @@ public sealed class TranslationProject : IDisposable
     public List<LocTarget> Targets { get; } = new();
     public List<PlainTarget> PlainTargets { get; } = new();
     public List<TextUnit> Units { get; } = new();
-    public List<string> Notes { get; } = new();
+    public List<LocText> Notes { get; } = new();
     public List<string> ArchivesWithoutText { get; } = new();
 
     private TranslationProject(ModPackage mod, ICompressor compressor, string targetLang)
@@ -115,8 +115,16 @@ public sealed class TranslationProject : IDisposable
         TargetLang = targetLang;
     }
 
+    /// <summary>Remarque montree dans l'appli (et ecrite dans le journal).</summary>
+    private void AddNote(LocText note)
+    {
+        Notes.Add(note);
+        Log.Warn("Analyse : " + note);
+    }
+
     public static TranslationProject Scan(string modPath, ICompressor compressor, string targetLang = "fr-fr")
     {
+        Log.Info($"Analyse de {modPath} (langue cible {targetLang})");
         var project = new TranslationProject(ModPackage.Open(modPath), compressor, targetLang);
         try
         {
@@ -126,6 +134,11 @@ public sealed class TranslationProject : IDisposable
                 if (PlainTextFile.IsSupported(f))
                     project.ScanPlainFile(f);
             project.LinkTextsToComparisons();
+            var u = project.Units;
+            Log.Info($"Analyse terminee : {u.Count} chaines ({u.Count(x => x.Status == UnitStatus.ToTranslate)} a traduire, " +
+                     $"{u.Count(x => x.Status == UnitStatus.ToCheck)} a verifier, {u.Count(x => x.Status == UnitStatus.AlreadyTranslated)} deja traduites, " +
+                     $"{u.Count(x => x.Status == UnitStatus.Code)} code), {project.Targets.Count} fichier(s) de textes, " +
+                     $"{project.PlainTargets.Count} fichier(s) en clair, {project.Notes.Count} remarque(s)");
         }
         catch
         {
@@ -157,11 +170,17 @@ public sealed class TranslationProject : IDisposable
             }
             catch (Exception ex)
             {
-                Notes.Add(UiText.T("scan.readFailed", archiveName, e.Display, ex.Message));
+                AddNote(new LocText("scan.readFailed", archiveName, e.Display, ex.Message));
                 cache[e.Hash] = (Array.Empty<byte>(), null);
                 return cache[e.Hash];
             }
             var loc = LocalizationFile.TryLoad(bytes);
+            // Un fichier qui a tout d'un fichier de textes mais qu'on ne sait pas lire : ses lignes manqueraient
+            if (loc == null && e.Path != null && Cr2wFile.LooksLikeCr2w(bytes) &&
+                e.Path.Contains("localization", StringComparison.OrdinalIgnoreCase) &&
+                e.Path.EndsWith(".json", StringComparison.OrdinalIgnoreCase) &&
+                LocalizationFile.TryReadSubtitleMap(bytes) == null)
+                Log.Warn($"{archiveName} : {e.Path} ressemble a un fichier de textes mais n'a pas pu etre lu");
             cache[e.Hash] = (bytes, loc);
             return cache[e.Hash];
         }
@@ -177,7 +196,7 @@ public sealed class TranslationProject : IDisposable
             .Where(e => Load(e)?.Loc != null)
             .ToList();
 
-        var pairs = new List<(string Src, string Tgt, string Reason)>();
+        var pairs = new List<(string Src, string Tgt, LocText Reason)>();
         var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // 1) Ce que declare le .xl d'ArchiveXL
@@ -193,16 +212,16 @@ public sealed class TranslationProject : IDisposable
                 var srcPaths = langs.First(l => l.Lang == srcLang).Paths;
                 var tgt = langs.FirstOrDefault(l => l.Lang == TargetLang);
                 List<string> tgtPaths;
-                string reason;
+                LocText reason;
                 if (tgt.Paths != null)
                 {
                     tgtPaths = tgt.Paths;
-                    reason = UiText.T("reason.xlDeclares", TargetLang);
+                    reason = new LocText("reason.xlDeclares", TargetLang);
                 }
                 else
                 {
                     tgtPaths = langs[0].Paths;
-                    reason = UiText.T("reason.xlFallback", TargetLang, langs[0].Lang);
+                    reason = new LocText("reason.xlFallback", TargetLang, langs[0].Lang);
                 }
                 for (var i = 0; i < tgtPaths.Count; i++)
                 {
@@ -217,7 +236,7 @@ public sealed class TranslationProject : IDisposable
                         for (var k = 0; k < srcSubs.Count; k++)
                         {
                             var t = tgtSubs != null && k < tgtSubs.Count ? tgtSubs[k] : srcSubs[k];
-                            pairs.Add((srcSubs[k], t, reason + UiText.T("reason.viaSubtitleMap")));
+                            pairs.Add((srcSubs[k], t, reason.Then(new LocText("reason.viaSubtitleMap"))));
                             covered.Add(ResourcePath.Sanitize(srcSubs[k]));
                             covered.Add(ResourcePath.Sanitize(t));
                         }
@@ -240,19 +259,19 @@ public sealed class TranslationProject : IDisposable
                 Regex.IsMatch(e.Path, $@"(^|[\\/_.]){l}([\\/_.]|$)", RegexOptions.IgnoreCase));
             if (lang == null)
             {
-                pairs.Add((path, path, UiText.T("reason.noLangInPath")));
+                pairs.Add((path, path, new LocText("reason.noLangInPath")));
             }
             else if (lang == "en-us")
             {
                 var fr = Regex.Replace(e.Path!, "en-us", TargetLang, RegexOptions.IgnoreCase);
                 if (Find(fr)?.Loc != null)
                 {
-                    pairs.Add((path, fr, UiText.T("reason.targetPresent", TargetLang)));
+                    pairs.Add((path, fr, new LocText("reason.targetPresent", TargetLang)));
                     covered.Add(ResourcePath.Sanitize(fr));
                 }
                 else
                 {
-                    pairs.Add((path, path, UiText.T("reason.replaceEnglish", TargetLang)));
+                    pairs.Add((path, path, new LocText("reason.replaceEnglish", TargetLang)));
                 }
             }
             // autres langues : ignorees
@@ -266,7 +285,7 @@ public sealed class TranslationProject : IDisposable
             var src = ulong.TryParse(srcPath, out var srcHash) && ar.ByHash.TryGetValue(srcHash, out var se) ? Load(se) : Find(srcPath);
             if (src?.Loc == null)
             {
-                Notes.Add(UiText.T("scan.sourceMissing", archiveName, srcPath));
+                AddNote(new LocText("scan.sourceMissing", archiveName, srcPath));
                 continue;
             }
             var tgt = ulong.TryParse(tgtPath, out var tgtHash) && ar.ByHash.TryGetValue(tgtHash, out var te) ? Load(te) : Find(tgtPath);
@@ -275,7 +294,7 @@ public sealed class TranslationProject : IDisposable
             var template = targetExists ? tgt!.Value.Loc! : src.Value.Loc;
             if (template.Kind != src.Value.Loc.Kind)
             {
-                Notes.Add(UiText.T("scan.typeMismatch", archiveName, tgtPath, srcPath));
+                AddNote(new LocText("scan.typeMismatch", archiveName, tgtPath, srcPath));
                 continue;
             }
 
@@ -322,7 +341,7 @@ public sealed class TranslationProject : IDisposable
                 }
             }
             if (missing > 0)
-                Notes.Add(UiText.T("scan.missingLines", archiveName, missing, tgtPath));
+                AddNote(new LocText("scan.missingLines", archiveName, missing, tgtPath));
         }
 
         if (!Targets.Any(t => t.ArchiveName == archiveName))
@@ -338,7 +357,7 @@ public sealed class TranslationProject : IDisposable
         var full = Mod.FullPath(relative);
         if (new FileInfo(full).Length > MaxPlainFileSize)
         {
-            Notes.Add(UiText.T("scan.tooBig", relative));
+            AddNote(new LocText("scan.tooBig", relative));
             return;
         }
         PlainTextFile file;
@@ -348,7 +367,7 @@ public sealed class TranslationProject : IDisposable
         }
         catch (Exception ex)
         {
-            Notes.Add(UiText.T("scan.plainReadFailed", relative, ex.Message));
+            AddNote(new LocText("scan.plainReadFailed", relative, ex.Message));
             return;
         }
         if (file.Literals.Count == 0) return;
@@ -385,21 +404,25 @@ public sealed class TranslationProject : IDisposable
 
     /// <summary>
     /// Repere les textes qui servent aussi d'identifiants : meme valeur exacte qu'une comparaison du code,
-    /// dans des fichiers du meme langage. Exemple (Main Menu Backgrounds) :
+    /// dans le meme fichier. Exemple (Main Menu Backgrounds) :
     ///   Categories() renvoie ["Background", ...]  et  Settings() teste Equals(category, "Background").
     /// Traduire l'un sans l'autre casse le menu ; on reportera donc la traduction dans la comparaison.
+    /// <para>
+    /// Seulement dans le meme fichier : d'un fichier a l'autre, le meme mot est souvent sans rapport
+    /// (Night City Traffic Overhaul : le libelle "Badlands" d'un reglage et le nom de district renvoye par le jeu).
+    /// </para>
     /// </summary>
     private void LinkTextsToComparisons()
     {
         var texts = Units
             .Where(u => u.Plain != null && u.Status is UnitStatus.ToTranslate or UnitStatus.ToCheck && Family(u.Plain) != "")
-            .GroupBy(u => (Family(u.Plain!), u.Source))
+            .GroupBy(u => (u.Plain!.RelativePath, u.Source))
             .ToDictionary(g => g.Key, g => g.ToList());
         if (texts.Count == 0) return;
         foreach (var code in Units.Where(u => u.Plain != null && u.Status == UnitStatus.Code &&
                                               u.Plain.File.Literals[u.LiteralIndex].IsComparison))
         {
-            if (!texts.TryGetValue((Family(code.Plain!), code.Source), out var candidates)) continue;
+            if (!texts.TryGetValue((code.Plain!.RelativePath, code.Source), out var candidates)) continue;
             // On ne sait pas lequel de ces textes arrive dans la comparaison : on les lie tous.
             // La traduction ne sera reportee que s'ils sont tous traduits pareil.
             foreach (var t in candidates)
@@ -443,8 +466,9 @@ public sealed class TranslationProject : IDisposable
                 {
                     loc = LocalizationFile.TryLoad(ar.ReadMain(e));
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Log.Warn($"Reprise de trad : {archive} / {e.Display} illisible, ignore", ex);
                     continue;
                 }
                 if (loc == null) continue;
@@ -474,13 +498,14 @@ public sealed class TranslationProject : IDisposable
             {
                 translated = PlainTextFile.Load(mod.FullPath(rel), rel);
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Warn($"Reprise de trad : {rel} illisible, ignore", ex);
                 continue;
             }
             if (translated.Literals.Count != target.File.Literals.Count)
             {
-                Notes.Add(UiText.T("import.structure", target.RelativePath));
+                AddNote(new LocText("import.structure", target.RelativePath));
                 continue;
             }
             foreach (var u in Units.Where(u => u.Plain == target))
@@ -491,24 +516,41 @@ public sealed class TranslationProject : IDisposable
                 count++;
             }
         }
+        Log.Info($"Reprise de la trad {translationModPath} : {count} ligne(s) reprises");
         return count;
     }
 
-    public static readonly string[] TsvHeader =
-        { "#source", "fichier", "cle", "champ", "statut", "contexte", "anglais", "francais", "reporter_dans_le_code" };
+    /// <summary>
+    /// En-tete du TSV dans la langue de l'interface. La premiere colonne reste "#source" : c'est elle qui fait reconnaitre
+    /// la ligne d'en-tete. La lecture se fait par position, donc un TSV d'une version ou d'une langue a l'autre se relit.
+    /// </summary>
+    public static string[] TsvHeader() => new[]
+    {
+        "#source", UiText.T("tsv.col.file"), UiText.T("tsv.col.key"), UiText.T("tsv.col.field"), UiText.T("tsv.col.status"),
+        UiText.T("tsv.col.context"), UiText.T("tsv.col.english"), UiText.T("tsv.col.translation"), UiText.T("tsv.col.applyToCode"),
+    };
 
     public static string StatusLabel(UnitStatus s) => s switch
     {
-        UnitStatus.AlreadyTranslated => "deja traduit",
-        UnitStatus.ToCheck => "a verifier",
-        UnitStatus.Code => "code",
-        _ => "a traduire",
+        UnitStatus.AlreadyTranslated => UiText.T("tsv.status.done"),
+        UnitStatus.ToCheck => UiText.T("tsv.status.check"),
+        UnitStatus.Code => UiText.T("tsv.status.code"),
+        _ => UiText.T("tsv.status.todo"),
     };
+
+    /// <summary>"non" / "no" (et la valeur de la langue choisie) dans la colonne du report dans le code.</summary>
+    private static bool IsNo(string value)
+    {
+        var v = value.Trim();
+        return v.Equals("non", StringComparison.OrdinalIgnoreCase) || v.Equals("no", StringComparison.OrdinalIgnoreCase) ||
+               v.Equals("n", StringComparison.OrdinalIgnoreCase) || v == "0" || v.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+               v.Equals(UiText.T("tsv.no"), StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>Exporte les lignes. Par defaut sans les chaines classees "code".</summary>
     public void ExportTsv(string path, bool includeCode = false)
     {
-        var rows = new List<string[]> { TsvHeader };
+        var rows = new List<string[]> { TsvHeader() };
         foreach (var u in Units)
         {
             if (u.Status == UnitStatus.Code && !includeCode && u.Translation == null) continue;
@@ -520,7 +562,7 @@ public sealed class TranslationProject : IDisposable
                     : u.Context,
                 u.Source,
                 u.Translation ?? (u.Status == UnitStatus.AlreadyTranslated ? u.Current : ""),
-                u.LinkedCode.Count == 0 ? "" : u.ApplyToLinkedCode ? "oui" : "non",
+                u.LinkedCode.Count == 0 ? "" : UiText.T(u.ApplyToLinkedCode ? "tsv.yes" : "tsv.no"),
             });
         }
         Tsv.Write(path, rows);
@@ -544,11 +586,13 @@ public sealed class TranslationProject : IDisposable
                 continue;
             }
             if (row.Length >= 9 && unit.LinkedCode.Count > 0)
-                unit.ApplyToLinkedCode = !row[8].Trim().Equals("non", StringComparison.OrdinalIgnoreCase);
+                unit.ApplyToLinkedCode = !IsNo(row[8]);
             if (row[7].Length == 0) continue;
             unit.Translation = Tsv.Unescape(row[7]);
             applied++;
         }
+        Log.Info($"Import du TSV {path} : {applied} ligne(s) importees, {warnings.Count} ignoree(s)");
+        foreach (var w in warnings) Log.Warn("TSV : " + w);
         return (applied, warnings);
     }
 
@@ -599,6 +643,7 @@ public sealed class TranslationProject : IDisposable
         if (changed.Count == 0)
         {
             result.Warnings.Add(UiText.T("build.nothing"));
+            Log.Info("Fabrication : aucune ligne modifiee, rien a fabriquer");
             return result;
         }
 
@@ -609,6 +654,7 @@ public sealed class TranslationProject : IDisposable
         }
 
         var modDir = Path.Combine(outputDir, SafeName(string.IsNullOrWhiteSpace(outputName) ? Mod.Name + " - " + LangSuffix(TargetLang) : outputName));
+        Log.Info($"Fabrication : {changed.Count} ligne(s) modifiee(s) vers {modDir}");
         if (Directory.Exists(modDir)) Directory.Delete(modDir, true);
 
         // Archives
@@ -695,7 +741,7 @@ public sealed class TranslationProject : IDisposable
                 throw new InvalidDataException(UiText.T("build.verifyCount", target.RelativePath));
             for (var i = 0; i < check.Literals.Count; i++)
             {
-                var expected = replacements.TryGetValue(i, out var t) ? t : target.File.Literals[i].Value;
+                var expected = replacements.TryGetValue(i, out var t) ? target.File.Literals[i].Normalize(t) : target.File.Literals[i].Value;
                 if (check.Literals[i].Value != expected)
                     throw new InvalidDataException(UiText.T("build.verifyString", target.RelativePath, i));
             }
@@ -713,6 +759,10 @@ public sealed class TranslationProject : IDisposable
             ZipFile.CreateFromDirectory(modDir, zip, CompressionLevel.Optimal, false);
             result.Zip = zip;
         }
+        Log.Info($"Fabrication terminee : {result.Archives.Count} archive(s), {result.PlainFiles.Count} fichier(s) en clair" +
+                 (result.Zip != null ? $", {result.Zip}" : ""));
+        foreach (var info in result.Infos) Log.Info("Fabrication : " + info);
+        foreach (var w in result.Warnings) Log.Warn("Fabrication : " + w);
         return result;
     }
 
