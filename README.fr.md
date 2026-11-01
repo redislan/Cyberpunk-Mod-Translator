@@ -1,4 +1,4 @@
-# Cyberpunk Mod Translator — v0.5.0
+# Cyberpunk Mod Translator — v0.6.0
 
 *[English version](README.md)*
 
@@ -21,7 +21,15 @@ Le reste de l'appli :
 - **Reprendre une trad** : récupère les textes d'une trad déjà faite (dossier ou zip), par exemple pour mettre une trad à jour après une nouvelle version du mod.
 - **TSV** : export et import pour travailler dans Excel.
 - **Paramètres** : langue de l'interface, dossier du jeu (pour la DLL de compression), dossier « mods » de MO2, dossier de sortie, langue cible.
-- **Données** : réglages et sauvegardes dans `%AppData%\CyberpunkModTranslator` (`reglages.json`, `projets\*.tsv`, `journal.txt` en cas d'erreur). Les langues de l'interface sont à côté de l'exe, dans `lang\`.
+- **Données** : réglages et sauvegardes dans `%AppData%\CyberpunkModTranslator` (`reglages.json`, `projets\*.tsv`), et un journal par session dans `logs\` (les 10 derniers sont gardés). Les langues de l'interface sont à côté de l'exe, dans `lang\`.
+
+## Signaler un bug
+
+Il faut donner :
+
+1. **Le mod** : son nom et son lien Nexus.
+2. **Ce qui ne va pas** : un texte resté en anglais en jeu, une ligne rangée dans « Code » alors que c'est du texte (ou l'inverse), un message d'erreur…
+3. **Le journal de la session** : Paramètres → « Dossier des journaux » ouvre le dossier avec le dernier journal sélectionné. Toutes les erreurs y sont écrites, avec leur détail.
 
 ## Langues de l'interface
 
@@ -31,9 +39,8 @@ L'interface existe en anglais et en français. Dans **Paramètres → Langue de 
 - **Ajouter une langue** : copier `en.json`, le renommer avec le code de la langue (`de.json`, `es.json`, `pt-br.json`…), mettre le nom de la langue dans `language_name`, son pseudo dans `translator`, et traduire les textes à droite des `:`. Pas besoin de recompiler : le dossier est relu à chaque ouverture des Paramètres, et le bouton « Dossier des langues » y mène directement. Le mode d'emploi en anglais pour les traducteurs est dans `lang\README.md`.
 - Une ligne absente d'un fichier s'affiche en anglais. Les Paramètres montrent le pourcentage traduit de chaque langue, et signalent un fichier illisible (virgule ou guillemet en trop…) sans planter.
 - Un fichier `fr.json` posé dans le dossier remplace la version intégrée : on peut corriger un texte sans recompiler.
-- Les messages déjà affichés pour le mod ouvert (notes de l'analyse) restent dans l'ancienne langue jusqu'à la prochaine ouverture du mod.
 - La langue cible suit aussi : la colonne de traduction porte le nom de la langue, et les noms produits utilisent son code (`<Mod> - DE.zip`, `#<Archive>_DE.archive`). Pour le français, rien ne change (`- FR`, `_FR`).
-- Restent en français : la ligne de commande `cmt.exe` et les noms de colonnes du TSV (`anglais`, `francais`…), gardés tels quels pour que les anciens TSV se relisent.
+- La ligne de commande `cmt.exe` et le fichier TSV suivent aussi la langue de l'interface (celle de Windows, ou `--ui fr`). Un TSV de n'importe quelle version ou langue se relit : les colonnes sont lues par position.
 
 ## Fonctionnement
 
@@ -56,20 +63,24 @@ cmt exporter   "D:\MO2\mods\Night City Interactions" nci.tsv
 cmt construire "D:\MO2\mods\Night City Interactions" nci.tsv "D:\Traductions"
 ```
 
+Les noms anglais marchent aussi : `analyze`, `export`, `build`, `list`, `--from`, `--all`, `--game`, `--lang`, `--no-compression`.
+
 - **analyser** : montre les textes trouvés, le fichier qui sera écrit et pourquoi, et le tri des chaînes des fichiers en clair.
-- **exporter** : écrit un fichier TSV. Tu remplis la colonne `francais`, et les retours à la ligne s'écrivent `\n`.
+- **exporter** : écrit un fichier TSV. Tu remplis la colonne `traduction`, et les retours à la ligne s'écrivent `\n`.
 - **construire** : fabrique `<Mod> - FR.zip`, à installer dans MO2 sous le mod d'origine.
 - `--depuis <trad existante>` reprend les textes d'une traduction déjà faite. Ça marche avec `exporter` et `construire`, et sert à mettre une trad à jour quand le mod change.
 - `--tout` (avec `exporter`) ajoute aussi les chaînes classées « code ».
 - `--jeu "D:\...\Cyberpunk 2077"` indique le dossier du jeu, si la détection automatique échoue.
+- `--langue de-de` choisit la langue cible (le français par défaut), `--ui en` la langue des messages.
+- `--debug` écrit un journal plus détaillé (aussi pour l'appli : `CyberpunkModTranslator.exe --debug`). Les journaux vont dans `%AppData%\CyberpunkModTranslator\logs\`.
 
 Le `<mod>` peut être le dossier du mod dans MO2 ou le `.zip` téléchargé sur Nexus. Les `.7z` et `.rar` ne sont pas gérés : utilise le dossier MO2.
 
 ## Le fichier TSV
 
-Colonnes : `source` (l'archive, ou `-` pour un fichier en clair), `fichier`, `cle`, `champ`, `statut`, `contexte`, `anglais`, `francais`, `reporter_dans_le_code`.
+Colonnes (dans la langue de l'interface ; ici en français) : `#source` (l'archive, ou `-` pour un fichier en clair), `fichier`, `cle`, `champ`, `statut`, `contexte`, `anglais`, `traduction` (quelle que soit la langue cible ; `francais` dans les versions précédentes), `reporter_dans_le_code`.
 
-La dernière colonne n'est remplie que pour les textes liés au code : `oui` (par défaut) ou `non`. Les TSV de la v0.3, sans cette colonne, se relisent normalement.
+La dernière colonne n'est remplie que pour les textes liés au code : `oui` (par défaut) ou `non` (`yes` / `no` marchent aussi). Les TSV de la v0.3, sans cette colonne, se relisent normalement, tout comme ceux écrits dans une autre langue : les colonnes sont lues par position.
 
 | Statut | Signification |
 |---|---|
@@ -96,7 +107,10 @@ Tu peux éditer le TSV dans Excel. Le programme relit aussi les fichiers réenre
 - **Code** :
   - les chemins (`base\...`, `r6/logs/mods`, `/MonMod/option`), les noms de fichiers, `snake_case`, `camelCase` et `Items.Truc` ;
   - les arguments de `require`, `GetMod`, `ModuleExists`, `Observe`, `SetFactStr`, `GameOptions`… ;
-  - les messages de journal : `print`, `spdlog`, `Log`, `LogRetreat`, `Logger.error`… ;
+  - les messages de journal et de debug : `print`, `spdlog`, `Log`, `LogRetreat`, `Logger.error`, `ModLog` en redscript, les fonctions de journal maison (`tlog`, `dbg`, `wind_log`, `DebugLog`…). `addLog` / `pushLog` restent du texte : ils remplissent souvent un journal affiché dans la fenêtre du mod ;
+  - ce qui est écrit dans un fichier (`f:write`, `io.write`, `WriteText`) : c'est souvent lu par la DLL du mod ou un autre script ;
+  - dans les tables de réglages Lua comme `{'Clouds', 'Density', 'Densité des nuages', 0, 1, .5, 'f'}`, les mots seuls avant le libellé (ce sont des clés, souvent écrites dans un `.ini`), et les listes d'identifiants comme `{'Clear', 'FewClouds', 'LightRain', …}`. Un mot utilisé comme une de ces clés reste du code partout dans le fichier ;
+  - le début d'une clé construite (`'Weather.' .. nom`) et les valeurs d'énumération du jeu (`Enum.new('type', 'Valeur')`) ;
   - les motifs Lua (`gsub`, `find`, `match`), les comparaisons (`== "Menu"`), les clés de table (`["nom"]`) et les énumérations (`Menu = 'Menu'`) ;
   - le code généré (`Game.AddToInventory(...)`, `camera=%s mode=%s`) et les identifiants ImGui (`PushID`, `OpenPopup`…) ;
   - un mot seul répété 10 fois ou plus dans un même fichier (liste de données), ou un mot seul dans un fichier TweakXL ;
@@ -110,7 +124,8 @@ Tu peux éditer le TSV dans Excel. Le programme relit aussi les fichiers réenre
   - `SetText(...)` et les notifications.
 - **Selon le nom du champ** : `label`, `title`, `desc`, `tooltip`… vont vers « a traduire » ; `event`, `id`, `type`, `path`… vers « code ».
 - Une phrase reste du texte même si elle contient `/` ou `=` (« Enable/disable », « 0 = off »).
-- Les chaînes redscript `s"Bonjour \(nom)"` restent telles quelles : garde les `\(...)`.
+- Les chaînes redscript `s"Bonjour \(nom)"` restent telles quelles : garde les `\(...)`. Un `"` tapé dans leur traduction est écrit `\"`.
+- En YAML, un commentaire après une clé (`Vehicle.ma_voiture: # nom`) n'est jamais du texte : le remplacer casserait le fichier.
 - À l'écriture, guillemets et antislashs sont échappés selon le langage. Le reste du fichier ne change pas d'un octet.
 
 ## Textes qui servent aussi d'identifiants
@@ -123,7 +138,7 @@ public func Settings(category: String) -> array<CName> {
   if Equals(category, "Background") { ... }                                                           // comparé
 ```
 
-Si on traduit seulement le premier, `Equals(category, "Background")` ne trouve plus rien et le menu se mélange. Le programme repère donc les comparaisons du code (`==`, `~=`, `!=`, `Equals`, `case`, `StrCmp`… en Lua et redscript) dont le texte est exactement un texte à traduire, et y reporte la traduction.
+Si on traduit seulement le premier, `Equals(category, "Background")` ne trouve plus rien et le menu se mélange. Le programme repère donc les comparaisons du code (`==`, `~=`, `!=`, `Equals`, `case`, `StrCmp`… en Lua et redscript) **dans le même fichier** dont le texte est exactement un texte à traduire, et y reporte la traduction. D'un fichier à l'autre, le même mot est souvent sans rapport (Night City Traffic Overhaul : le libellé « Badlands » d'un réglage, et le nom de district qui vient du jeu).
 
 - Le report ne se fait que si **toutes** les occurrences de ce texte sont traduites **pareil**. Sinon le code n'est pas touché et un avertissement dit où sont les occurrences.
 - Une comparaison que tu as traduite toi-même n'est pas modifiée.
@@ -136,6 +151,8 @@ Si on traduit seulement le premier, `Equals(category, "Background")` ne trouve p
 - **Main Menu Backgrounds** : avec la trad FR de la v0.3, `Equals(category, ...)` restait en anglais et le menu des réglages se mélangeait. La v0.3.1 reporte « Arrière-plan » et « Écran de chargement » dans les comparaisons ; le reste du fichier est identique à la trad d'origine.
 - **Échantillon de 33 mods** (62 fichiers : lua, reds, yaml, json, archives) : les chaînes « à vérifier » sont passées de 1540 à 165. 122 vrais textes rangés à tort dans le code sont maintenant à traduire (descriptions Mod Settings avec `/` ou `=`, `ImGui.Text`, Native Settings…), et 216 « à vérifier » sont devenus « à traduire ». Dans l'autre sens, 349 chaînes qui étaient « à traduire » sont maintenant rangées dans le code : messages de journal, code généré, traductions allemandes déjà fournies.
 - **Fichiers piégés** : commentaires contenant des guillemets, chaînes longues `[[...]]` en Lua, échappements, chaînes préfixées redscript, valeurs YAML contenant `:`, JSON. Les fichiers produits restent valides.
+- **v0.6, sur une vraie modlist de 52 mods** (environ 23 000 chaînes) : chaque changement du tri a été comparé avant/après ; seules les chaînes visées ont bougé (messages de debug, clés de réglages, échanges par fichier, commentaires YAML). Les 38 traductions fabriquées à partir d'eux sont identiques à l'octet près avant et après la réécriture des lecteurs de fichiers en clair.
+- **Archives abîmées** : les tailles et positions lues dans une archive sont vérifiées avant usage (index, nombre de fichiers, segments, taille décompressée jusqu'à 1 Go). Une archive abîmée ou piégée donne une erreur claire au lieu de faire planter l'outil.
 - **À chaque construction**, le programme relit tout ce qu'il vient d'écrire (archive, textes, fichiers en clair) et s'arrête si quelque chose ne correspond pas.
 - **Balises** : `{int_0}`, `<Rich ...>`, `%d`, `\(...)` et les retours à la ligne sont comparés entre l'anglais et le français, avec un avertissement si ça diffère.
 
@@ -156,11 +173,14 @@ Si on traduit seulement le premier, `Equals(category, "Background")` ne trouve p
 | `Core/Cr2w.cs` | Lecture et réécriture des fichiers CR2W |
 | `Core/Localization.cs` | Fichiers de textes (onscreens, sous-titres, cartes) |
 | `Core/ArchiveXl.cs` | Lecture tolérante du bloc `localization` des `.xl` |
-| `Core/PlainText.cs` | Fichiers en clair : lecture des chaînes, tri texte/code, réécriture |
+| `Core/PlainText.cs` | Un fichier en clair et ses chaînes, réécriture |
+| `Core/TextClassifier.cs` | Tri texte / code des chaînes |
+| `Core/Scanners/` | Un lecteur par langage (`LuaScanner`, `RedsScanner`, `YamlScanner`, `JsonScanner`) sur une base commune (`SourceScanner`) ; `StringSyntax` regroupe les guillemets et échappements de chaque langage, `CodeContext` trouve l'appel de fonction autour d'une chaîne, `FileRules` les règles sur le fichier entier |
 | `Core/ModPackage.cs` | Ouverture d'un mod (dossier ou zip) |
 | `Core/TranslationProject.cs` | Analyse, TSV, reprise d'une trad, construction du patch |
 | `Core/Tsv.cs` | Fichiers TSV (y compris réenregistrés par Excel) |
 | `Core/UiText.cs` | Langues de l'interface : lecture des `lang\*.json`, repli sur l'anglais |
+| `Core/Log.cs` | Journal de session (un fichier par lancement, aussi envoyé dans la fenêtre Sortie de Visual Studio) |
 | `lang/` | Fichiers de langue (`en.json`, `fr.json`) et mode d'emploi pour les traducteurs |
 | `Cli/Program.cs` | Ligne de commande `cmt` |
 | `App/Program.cs` | Serveur local de l'appli, ouverture de la fenêtre |

@@ -1,4 +1,4 @@
-# Cyberpunk Mod Translator — v0.5.0
+# Cyberpunk Mod Translator — v0.6.0
 
 *[Version française](README.fr.md)*
 
@@ -41,7 +41,15 @@ The rest of the interface:
 - **Reuse a translation**: picks up the texts of an existing translation (folder or zip), for example to update a translation after a new version of the mod.
 - **TSV**: export and import to work in Excel.
 - **Settings**: interface language, game folder (for the compression DLL), MO2 "mods" folder, output folder, target language.
-- **Data**: settings and saves are in `%AppData%\CyberpunkModTranslator` (`reglages.json`, `projets\*.tsv`, `journal.txt` if something goes wrong). Interface languages are next to the exe, in `lang\`.
+- **Data**: settings and saves are in `%AppData%\CyberpunkModTranslator` (`reglages.json`, `projets\*.tsv`), with one log per session in `logs\` (the last 10 are kept). Interface languages are next to the exe, in `lang\`.
+
+## Reporting a bug
+
+Please give:
+
+1. **The mod**: its name and its Nexus link.
+2. **What went wrong**: a text still in English in game, a line sorted as "Code" that is real text (or the other way round), an error message…
+3. **The log of that session**: Settings → "Logs folder" opens the folder with the latest log selected. Every error is written there, with its details.
 
 ## Interface languages
 
@@ -51,9 +59,8 @@ The interface comes in English and French. In **Settings → Interface language*
 - **Add a language**: copy `en.json`, rename it with the language code (`de.json`, `es.json`, `pt-br.json`…), put the language name in `language_name` and your name in `translator`, and translate the texts on the right of each `:`. No need to recompile: the folder is read again every time Settings opens, and the "Languages folder" button takes you there. Full instructions for translators: [lang/README.md](lang/README.md).
 - A line missing from a file is shown in English. Settings shows how much of each language is translated, and flags an unreadable file (an extra comma or quote mark…) instead of crashing.
 - A file in the folder replaces the built-in version with the same code: you can fix a text without recompiling.
-- Messages already shown for the open mod (analysis notes) stay in the old language until the mod is reopened.
 - The target language follows too: the translation column shows the language name, and the built files use its code (`<Mod> - DE.zip`, `#<Archive>_DE.archive`).
-- Still in French only: the command line `cmt.exe` and the TSV column names (`anglais`, `francais`…), kept as they are so older TSV files still load.
+- The command line `cmt.exe` and the TSV file follow the interface language too (the Windows language, or `--ui en`). A TSV from any version or language still loads: the columns are read by position.
 
 Want to share your language? Send it as a pull request, or post it on the Nexus Mods page of the tool.
 
@@ -75,37 +82,38 @@ Only dependency: the game's compression DLL (`bin\x64\oo2ext_7_win64.dll`), foun
 
 ## Command line (`cmt.exe`)
 
-The command line is in French (command names included):
-
 ```
-cmt analyser   "D:\MO2\mods\Night City Interactions"
-cmt exporter   "D:\MO2\mods\Night City Interactions" nci.tsv
-cmt construire "D:\MO2\mods\Night City Interactions" nci.tsv "D:\Traductions"
+cmt analyze "D:\MO2\mods\Night City Interactions"
+cmt export  "D:\MO2\mods\Night City Interactions" nci.tsv
+cmt build   "D:\MO2\mods\Night City Interactions" nci.tsv "D:\Translations"
 ```
 
-- **analyser** (analyse): shows the texts found, the file that will be written and why, and how the plain-file strings were sorted.
-- **exporter** (export): writes a TSV file. Fill in the `francais` column; line breaks are written `\n`.
-- **construire** (build): makes `<Mod> - FR.zip`, to install in MO2 below the original mod.
-- `--depuis <existing translation>` picks up the texts of an existing translation. Works with `exporter` and `construire`, to update a translation when the mod changes.
-- `--tout` (with `exporter`) also adds the strings sorted as "code".
-- `--jeu "D:\...\Cyberpunk 2077"` gives the game folder, if automatic detection fails.
+- **analyze**: shows the texts found, the file that will be written and why, and how the plain-file strings were sorted.
+- **export**: writes a TSV file. Fill in the `translation` column; line breaks are written `\n`.
+- **build**: makes `<Mod> - FR.zip` (or `- DE`…, see `--lang`), to install in MO2 below the original mod.
+- `--from <existing translation>` picks up the texts of an existing translation. Works with `export` and `build`, to update a translation when the mod changes.
+- `--all` (with `export`) also adds the strings sorted as "code".
+- `--game "D:\...\Cyberpunk 2077"` gives the game folder, if automatic detection fails.
+- `--lang de-de` sets the target language (French by default), `--ui en` the language of the messages.
+- The French names of earlier versions still work: `analyser`, `exporter`, `construire`, `lister`, `--depuis`, `--tout`, `--jeu`, `--langue`, `--sans-compression`.
+- `--debug` writes a more detailed log (also for the app: `CyberpunkModTranslator.exe --debug`). Logs go to `%AppData%\CyberpunkModTranslator\logs\`.
 
 The `<mod>` can be the mod's MO2 folder or the `.zip` downloaded from Nexus. `.7z` and `.rar` are not supported: use the MO2 folder.
 
 ## The TSV file
 
-Columns: `source` (the archive, or `-` for a plain file), `fichier` (file), `cle` (key), `champ` (field), `statut` (status), `contexte` (context), `anglais` (English), `francais` (translation, whatever the target language), `reporter_dans_le_code` (copy into code).
+Columns (in the interface language; here in English): `#source` (the archive, or `-` for a plain file), `file`, `key`, `field`, `status`, `context`, `english`, `translation` (whatever the target language), `apply_to_code`.
 
-The last column is only filled for texts linked to the code: `oui` (yes, default) or `non` (no). TSV files from v0.3, without this column, load normally.
+The last column is only filled for texts linked to the code: `yes` (default) or `no` (`oui` / `non` also work). TSV files from v0.3, without this column, load normally, and so do TSV files written in another language: the columns are read by position.
 
 | Status | Meaning |
 |---|---|
-| `a traduire` | Text to translate |
-| `a verifier` | Maybe text, maybe an identifier (a single word, a redscript `s"..."` string, a TweakXL field…). Only translate it if you're sure. |
-| `deja traduit` | The mod's target-language file already holds a translation (made by the author). |
-| `code` | Identifier, path, key, debug message. Not exported, except with `--tout`. |
+| `to translate` | Text to translate |
+| `to check` | Maybe text, maybe an identifier (a single word, a redscript `s"..."` string, a TweakXL field…). Only translate it if you're sure. |
+| `already translated` | The mod's target-language file already holds a translation (made by the author). |
+| `code` | Identifier, path, key, debug message. Not exported, except with `--all`. |
 
-The `contexte` column shows the code line the string comes from (plain files) or the text key (archives). It helps you decide.
+The `context` column shows the code line the string comes from (plain files) or the text key (archives). It helps you decide.
 
 You can edit the TSV in Excel. The program also reads files saved again as "Text (Tab delimited)" or "Unicode Text", and cells that Excel wraps in quotes.
 
@@ -123,7 +131,10 @@ You can edit the TSV in Excel. The program also reads files saved again as "Text
 - **Code**:
   - paths (`base\...`, `r6/logs/mods`, `/MyMod/option`), file names, `snake_case`, `camelCase` and `Items.Thing`;
   - arguments of `require`, `GetMod`, `ModuleExists`, `Observe`, `SetFactStr`, `GameOptions`…;
-  - log messages: `print`, `spdlog`, `Log`, `LogRetreat`, `Logger.error`…;
+  - log and debug messages: `print`, `spdlog`, `Log`, `LogRetreat`, `Logger.error`, redscript `ModLog`, home-made log functions (`tlog`, `dbg`, `wind_log`, `DebugLog`…). `addLog` / `pushLog` stay text: they usually fill a log shown in the mod's window;
+  - what is written to a file (`f:write`, `io.write`, `WriteText`): it's often read by the mod's DLL or another script;
+  - in Lua settings tables like `{'Clouds', 'Density', 'Cloud density', 0, 1, .5, 'f'}`, the single words before the label (they are keys, often written to a `.ini`), and lists of identifiers like `{'Clear', 'FewClouds', 'LightRain', …}`. A word used as such a key stays code everywhere in the file;
+  - the start of a built key (`'Weather.' .. name`) and game enum values (`Enum.new('type', 'Value')`);
   - Lua patterns (`gsub`, `find`, `match`), comparisons (`== "Menu"`), table keys (`["name"]`) and enums (`Menu = 'Menu'`);
   - generated code (`Game.AddToInventory(...)`, `camera=%s mode=%s`) and ImGui identifiers (`PushID`, `OpenPopup`…);
   - a single word repeated 10 times or more in the same file (a data list), or a single word in a TweakXL file;
@@ -137,7 +148,8 @@ You can edit the TSV in Excel. The program also reads files saved again as "Text
   - `SetText(...)` and notifications.
 - **Based on the field name**: `label`, `title`, `desc`, `tooltip`… go to "to translate"; `event`, `id`, `type`, `path`… to "code".
 - A sentence stays text even if it contains `/` or `=` ("Enable/disable", "0 = off").
-- Redscript strings like `s"Hello \(name)"` are kept as they are: keep the `\(...)`.
+- Redscript strings like `s"Hello \(name)"` are kept as they are: keep the `\(...)`. A `"` typed in their translation is written `\"`.
+- In YAML, a comment after a key (`Vehicle.my_car: # name`) is never text: replacing it would break the file.
 - When writing, quotes and backslashes are escaped for each language. The rest of the file doesn't change by a single byte.
 
 ## Texts that are also identifiers
@@ -150,7 +162,7 @@ public func Settings(category: String) -> array<CName> {
   if Equals(category, "Background") { ... }                                                           // compared
 ```
 
-If only the first one is translated, `Equals(category, "Background")` no longer matches anything and the menu gets mixed up. So the program finds the code comparisons (`==`, `~=`, `!=`, `Equals`, `case`, `StrCmp`… in Lua and redscript) whose text is exactly a text to translate, and copies the translation there.
+If only the first one is translated, `Equals(category, "Background")` no longer matches anything and the menu gets mixed up. So the program finds the code comparisons (`==`, `~=`, `!=`, `Equals`, `case`, `StrCmp`… in Lua and redscript) **in the same file** whose text is exactly a text to translate, and copies the translation there. From one file to another, the same word is often unrelated (Night City Traffic Overhaul: the "Badlands" label of a setting, and the district name that comes from the game).
 
 - The copy only happens if **every** occurrence of that text is translated **the same way**. Otherwise the code is left alone and a warning shows where the occurrences are.
 - A comparison you translated yourself is not changed.
@@ -163,6 +175,8 @@ If only the first one is translated, `Equals(category, "Background")` no longer 
 - **Main Menu Backgrounds**: with the v0.3 French translation, `Equals(category, ...)` stayed in English and the settings menu got mixed up. Since v0.3.1 the translations are copied into the comparisons; the rest of the file is identical to the original translation.
 - **A sample of 33 mods** (62 files: lua, reds, yaml, json, archives): "to check" strings went from 1540 to 165. 122 real texts wrongly sorted as code are now "to translate" (Mod Settings descriptions with `/` or `=`, `ImGui.Text`, Native Settings…), and 216 "to check" became "to translate". The other way round, 349 strings that were "to translate" are now sorted as code: log messages, generated code, German translations already shipped.
 - **Tricky files**: comments containing quotes, Lua long strings `[[...]]`, escapes, prefixed redscript strings, YAML values containing `:`, JSON. The output files stay valid.
+- **v0.6, on a real modlist of 52 mods** (about 23,000 strings): every change in the sorting was compared before/after; only the expected strings moved (debug messages, settings keys, file protocol, YAML comments). The 38 translations built from them came out byte for byte identical before and after the rewrite of the plain-file readers.
+- **Damaged archives**: sizes and positions read from an archive are checked before use (index, file count, segments, unpacked size up to 1 GB). A damaged or booby-trapped archive gives a clear error instead of crashing the tool.
 - **On every build**, the program reads back everything it just wrote (archive, texts, plain files) and stops if anything doesn't match.
 - **Tags**: `{int_0}`, `<Rich ...>`, `%d`, `\(...)` and line breaks are compared between the English and the translation, with a warning if they differ.
 
@@ -183,11 +197,14 @@ If only the first one is translated, `Equals(category, "Background")` no longer 
 | `Core/Cr2w.cs` | Reading and rewriting CR2W files |
 | `Core/Localization.cs` | Text files (onscreens, subtitles, maps) |
 | `Core/ArchiveXl.cs` | Tolerant reading of the `localization` block of `.xl` files |
-| `Core/PlainText.cs` | Plain files: reading strings, text/code sorting, rewriting |
+| `Core/PlainText.cs` | A plain file and its strings, rewriting |
+| `Core/TextClassifier.cs` | Text / code sorting of the strings |
+| `Core/Scanners/` | One reader per language (`LuaScanner`, `RedsScanner`, `YamlScanner`, `JsonScanner`) on a common base (`SourceScanner`); `StringSyntax` holds the quotes and escapes of each language, `CodeContext` finds the function call around a string, `FileRules` the whole-file rules |
 | `Core/ModPackage.cs` | Opening a mod (folder or zip) |
 | `Core/TranslationProject.cs` | Analysis, TSV, reusing a translation, building the patch |
 | `Core/Tsv.cs` | TSV files (including ones saved again by Excel) |
 | `Core/UiText.cs` | Interface languages: reading `lang\*.json`, English fallback |
+| `Core/Log.cs` | Session log (one file per launch, also sent to the Visual Studio Output window) |
 | `lang/` | Language files (`en.json`, `fr.json`) and instructions for translators |
 | `Cli/Program.cs` | The `cmt` command line |
 | `App/Program.cs` | The app's local server, opening the window |
