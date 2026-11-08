@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>CyberpunkModTranslator.Core</RootNamespace>
     <AssemblyName>CyberpunkModTranslator.Core</AssemblyName>
-    <Version>0.6.0</Version>
+    <Version>0.7.1</Version>
     <!-- CA1416 : les appels au registre Windows sont proteges par OperatingSystem.IsWindows() -->
     <NoWarn>CA1416</NoWarn>
   </PropertyGroup>

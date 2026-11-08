@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <title>Cyberpunk Mod Translator</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" sizes="256x256" href="/assets/icon-256.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon-32.png">
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <!-- Les textes viennent des fichiers lang\*.json (attributs data-i18n) : la page reste cachee jusqu'a leur arrivee -->
@@ -11,24 +13,29 @@
   <header class="topbar">
     <div class="brand">
       <div class="logo">CMT</div>
-      <div>
+      <div class="titles">
         <div class="title">Cyberpunk Mod Translator</div>
         <div class="subtitle" id="modName" data-i18n="header.noMod">No mod open</div>
       </div>
+      <!-- Onglets : traduction d'un mod / liste des mods de MO2 -->
+      <div class="tabs" role="tablist">
+        <button class="tab on" id="tabTranslate" role="tab" data-i18n="tab.translate">Translation</button>
+        <button class="tab" id="tabModlist" role="tab" data-i18n="tab.modlist" data-i18n-title="tab.modlist.tip">Modlist</button>
+      </div>
     </div>
     <nav class="actions">
-      <button class="btn" id="btnOpen" data-i18n="btn.open" data-i18n-title="btn.open.tip">Open a mod</button>
-      <button class="btn needs-project" id="btnImportTrad" data-i18n="btn.importTrad" data-i18n-title="btn.importTrad.tip">Reuse a translation</button>
-      <div class="menu needs-project">
+      <button class="btn tr-only" id="btnOpen" data-i18n="btn.open" data-i18n-title="btn.open.tip">Open a mod</button>
+      <button class="btn needs-project tr-only" id="btnImportTrad" data-i18n="btn.importTrad" data-i18n-title="btn.importTrad.tip">Reuse a translation</button>
+      <div class="menu needs-project tr-only">
         <button class="btn" id="btnTsv" data-i18n="btn.tsv">TSV ▾</button>
         <div class="menu-list hidden" id="tsvMenu">
           <button id="btnExportTsv" data-i18n="btn.exportTsv">Export for Excel</button>
           <button id="btnImportTsv" data-i18n="btn.importTsv">Import a TSV</button>
         </div>
       </div>
-      <button class="btn needs-project" id="btnSave" title="Ctrl+S" data-i18n="btn.save">Save</button>
+      <button class="btn needs-project tr-only" id="btnSave" title="Ctrl+S" data-i18n="btn.save">Save</button>
       <button class="btn icon" id="btnSettings" data-i18n-title="settings.title">⚙</button>
-      <button class="btn primary needs-project" id="btnBuild" data-i18n="btn.build">Build the translation</button>
+      <button class="btn primary needs-project tr-only" id="btnBuild" data-i18n="btn.build">Build the translation</button>
     </nav>
   </header>
 
@@ -73,6 +80,27 @@
     </section>
 
     <aside class="detail" id="detail"></aside>
+  </main>
+
+  <!-- Onglet Modlist : la liste de MO2 avec, pour chaque mod, traduit / a traduire / rien a traduire -->
+  <main class="modlist hidden" id="modlistView">
+    <div class="ml-toolbar" id="mlToolbar">
+      <label class="ml-profile"><span data-i18n="ml.profile">MO2 profile</span> <select id="mlProfile"></select></label>
+      <input type="search" id="mlSearch" data-i18n-placeholder="ml.search">
+      <label class="check"><input type="checkbox" id="mlHideDisabled"> <span data-i18n="ml.hideDisabled">Hide disabled mods</span></label>
+      <span class="grow"></span>
+      <div class="menu">
+        <button class="btn" id="btnMlSeps" data-i18n="ml.separators">Separators ▾</button>
+        <div class="menu-list ml-seps hidden" id="mlSepMenu"></div>
+      </div>
+      <button class="btn" id="btnMlCollapse" data-i18n="ml.collapseAll">Collapse all</button>
+      <button class="btn" id="btnMlRefresh" data-i18n="ml.refresh" data-i18n-title="ml.refresh.tip">Refresh</button>
+    </div>
+    <div class="ml-filters" id="mlFilters">
+      <div class="chips" id="mlChips"></div>
+      <div class="ml-summary" id="mlSummary"></div>
+    </div>
+    <div class="ml-list" id="mlList"></div>
   </main>
 
   <footer class="statusbar">

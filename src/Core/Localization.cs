@@ -46,9 +46,18 @@ public sealed class LocalizationFile
         Kind = kind;
     }
 
+    /// <summary>
+    /// Debut du nom de classe de tous les fichiers de textes. Les noms de classe sont ecrits en clair dans la table des
+    /// chaines du CR2W : un fichier qui ne contient pas ces octets ne peut pas etre un fichier de textes, inutile de le
+    /// decoder (gros gain sur les archives sans liste de chemins, ou chaque fichier doit etre essaye).
+    /// </summary>
+    private static readonly byte[] ClassPrefix = "localizationPersistence"u8.ToArray();
+
+    private static bool MayBeLocalization(byte[] data) => data.AsSpan().IndexOf(ClassPrefix) >= 0;
+
     public static LocalizationFile? TryLoad(byte[] data)
     {
-        if (!Cr2wFile.LooksLikeCr2w(data)) return null;
+        if (!Cr2wFile.LooksLikeCr2w(data) || !MayBeLocalization(data)) return null;
         Cr2wFile cr2w;
         try
         {
@@ -109,7 +118,7 @@ public sealed class LocalizationFile
     /// </summary>
     public static List<string>? TryReadSubtitleMap(byte[] data)
     {
-        if (!Cr2wFile.LooksLikeCr2w(data)) return null;
+        if (!Cr2wFile.LooksLikeCr2w(data) || !MayBeLocalization(data)) return null;
         Cr2wFile cr2w;
         try
         {

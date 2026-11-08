@@ -58,7 +58,24 @@ public sealed class TextUnit
     public string Source { get; init; } = "";
     public string Current { get; init; } = "";
     public UnitStatus Status { get; init; }
-    public string? Translation { get; set; }
+    private string? _translation;
+
+    public string? Translation
+    {
+        get => _translation;
+        set => _translation = MatchNewlineStyle(Source, value);
+    }
+
+    /// <summary>
+    /// Si l'original ecrit ses retours a la ligne en texte (\n, deux caracteres) et n'en a aucun vrai,
+    /// la traduction garde la meme forme : ses vrais retours a la ligne redeviennent \n.
+    /// </summary>
+    internal static string? MatchNewlineStyle(string source, string? text)
+    {
+        if (string.IsNullOrEmpty(text) || !text.Contains('\n')) return text;
+        if (!source.Contains("\\n") || source.Contains('\n')) return text;
+        return text.Replace("\r\n", "\n").Replace("\n", "\\n");
+    }
 
     public bool HasChange => !string.IsNullOrEmpty(Translation) && Translation != Current;
 
@@ -100,6 +117,9 @@ public sealed class TranslationProject : IDisposable
 
     private readonly ICompressor _compressor;
 
+    /// <summary>Analyse de fond (onglet Modlist) : remarques et etapes en niveau Debug, pour ne pas noyer le journal.</summary>
+    private bool _quiet;
+
     public ModPackage Mod { get; }
     public string TargetLang { get; }
     public List<LocTarget> Targets { get; } = new();
@@ -119,13 +139,15 @@ public sealed class TranslationProject : IDisposable
     private void AddNote(LocText note)
     {
         Notes.Add(note);
-        Log.Warn("Analyse : " + note);
+        Log.Write(_quiet ? LogSeverity.Debug : LogSeverity.Warning, "Analyse : " + note, null);
     }
 
-    public static TranslationProject Scan(string modPath, ICompressor compressor, string targetLang = "fr-fr")
+    /// <param name="quiet">Analyse de fond (onglet Modlist) : journal en niveau Debug seulement.</param>
+    public static TranslationProject Scan(string modPath, ICompressor compressor, string targetLang = "fr-fr", bool quiet = false)
     {
-        Log.Info($"Analyse de {modPath} (langue cible {targetLang})");
-        var project = new TranslationProject(ModPackage.Open(modPath), compressor, targetLang);
+        var level = quiet ? LogSeverity.Debug : LogSeverity.Info;
+        Log.Write(level, $"Analyse de {modPath} (langue cible {targetLang})", null);
+        var project = new TranslationProject(ModPackage.Open(modPath), compressor, targetLang) { _quiet = quiet };
         try
         {
             foreach (var archive in project.Mod.Archives)
@@ -135,10 +157,10 @@ public sealed class TranslationProject : IDisposable
                     project.ScanPlainFile(f);
             project.LinkTextsToComparisons();
             var u = project.Units;
-            Log.Info($"Analyse terminee : {u.Count} chaines ({u.Count(x => x.Status == UnitStatus.ToTranslate)} a traduire, " +
+            Log.Write(level, $"Analyse terminee : {u.Count} chaines ({u.Count(x => x.Status == UnitStatus.ToTranslate)} a traduire, " +
                      $"{u.Count(x => x.Status == UnitStatus.ToCheck)} a verifier, {u.Count(x => x.Status == UnitStatus.AlreadyTranslated)} deja traduites, " +
                      $"{u.Count(x => x.Status == UnitStatus.Code)} code), {project.Targets.Count} fichier(s) de textes, " +
-                     $"{project.PlainTargets.Count} fichier(s) en clair, {project.Notes.Count} remarque(s)");
+                     $"{project.PlainTargets.Count} fichier(s) en clair, {project.Notes.Count} remarque(s)", null);
         }
         catch
         {
@@ -585,6 +607,12 @@ public sealed class TranslationProject : IDisposable
                 warnings.Add(UiText.T("tsv.unknownLine", row[0], row[1], row[2]));
                 continue;
             }
+            // La cle doit toujours designer le meme texte anglais : une cle decalee ecrirait la traduction au mauvais endroit.
+            if (row[6].Length > 0 && row[6] != Tsv.Escape(unit.Source))
+            {
+                warnings.Add(UiText.T("tsv.sourceChanged", row[0], row[1], row[2]));
+                continue;
+            }
             if (row.Length >= 9 && unit.LinkedCode.Count > 0)
                 unit.ApplyToLinkedCode = !IsNo(row[8]);
             if (row[7].Length == 0) continue;
@@ -596,6 +624,23 @@ public sealed class TranslationProject : IDisposable
         return (applied, warnings);
     }
 
+    /// <summary>
+    /// Lignes a traduire (ou a verifier) qui ont deja une traduction dans un TSV (la sauvegarde automatique de l'appli),
+    /// sans rien modifier ni rien ecrire dans le journal : sert a l'onglet Modlist.
+    /// </summary>
+    public int CountTranslatedIn(string tsvPath)
+    {
+        var open = Units.Where(u => u.Status is UnitStatus.ToTranslate or UnitStatus.ToCheck)
+            .ToDictionary(u => (u.SourceName, Norm(u.FilePath), u.Key, u.Field), u => u.Source);
+        var count = 0;
+        // Meme regle que ImportTsv : une ligne dont l'anglais ne correspond plus (cle decalee) ne compte pas comme traduite.
+        foreach (var row in Tsv.Read(tsvPath))
+            if (row.Length >= 8 && row[7].Length > 0 && open.Remove((row[0], Norm(row[1]), row[2], row[3]), out var source) &&
+                (row[6].Length == 0 || row[6] == Tsv.Escape(source)))
+                count++;
+        return count;
+    }
+
     private static string Norm(string path) => ResourcePath.Sanitize(path);
 
     // -----------------------------------------------------------------------------------------
@@ -603,7 +648,7 @@ public sealed class TranslationProject : IDisposable
     // -----------------------------------------------------------------------------------------
 
     private static readonly Regex TagPattern = new(
-        @"\{[^{}]*\}|<[^<>]*>|\n|%[-+#0]*\d*(?:\.\d+)?[sdifxXcq]|\\\([^)]*\)",
+        @"\{[^{}]*\}|<[^<>]*>|\n|\\n|%[-+#0]*\d*(?:\.\d+)?[sdifxXcq]|\\\([^)]*\)",
         RegexOptions.Compiled);
 
     /// <summary>Balises a conserver ({...}, &lt;...&gt;, %s, \(...), retours a la ligne). Renvoie une description si elles different.</summary>

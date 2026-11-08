@@ -16,7 +16,9 @@ internal sealed class YamlScanner : SourceScanner
         "shortDescription", "title", "subtitle", "displayNameKey", "uiName", "fullName", "name",
     };
 
-    private static readonly Regex KeyValue = new(@"^(?<indent>\s*)(?:-\s+)?(?<key>[^\s:#'""][^:#]*?|'[^']*'|""[^""]*"")\s*:(?:\s+(?<value>.*))?$", RegexOptions.Compiled);
+    // "- " est atomique (?>...) et la cle ne peut pas commencer par { ou [ : une ligne "- { tier: X, ... }" (mapping en ligne)
+    // n'est pas une cle "{ tier", ni une cle "- { tier" par retour en arriere. Elle passe alors par ListItem, puis est ignoree ({).
+    private static readonly Regex KeyValue = new(@"^(?<indent>\s*)(?>(?:-\s+)?)(?<key>[^\s:#'""{\[][^:#]*?|'[^']*'|""[^""]*"")\s*:(?:\s+(?<value>.*))?$", RegexOptions.Compiled);
     private static readonly Regex ListItem = new(@"^(?<indent>\s*)-\s+(?<value>.+)$", RegexOptions.Compiled);
 
     public override List<StringLiteral> Scan()

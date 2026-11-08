@@ -63,7 +63,7 @@ public sealed class RedArchive : IDisposable
     {
         FilePath = path;
         _compressor = compressor;
-        _stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        _stream = SharedFile.OpenRead(path);
     }
 
     public static RedArchive Open(string path, ICompressor compressor)

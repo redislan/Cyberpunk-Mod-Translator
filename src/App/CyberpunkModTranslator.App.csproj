@@ -8,8 +8,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>CyberpunkModTranslator.App</RootNamespace>
     <AssemblyName>CyberpunkModTranslator</AssemblyName>
-    <Version>0.6.0</Version>
+    <Version>0.7.1</Version>
     <NoWarn>CA1416</NoWarn>
+    <!-- Icone du .exe (badge jaune CMT) : assets\icon\make_icon.py la refabrique -->
+    <ApplicationIcon>..\..\assets\icon\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <!-- L'interface (HTML/CSS/JS) est integree dans l'exe : un seul fichier a distribuer avec ses DLL -->
@@ -17,6 +19,8 @@
     <Content Remove="wwwroot\**" />
     <None Remove="wwwroot\**" />
     <EmbeddedResource Include="wwwroot\**" LogicalName="wwwroot/%(Filename)%(Extension)" />
+    <!-- Meme icone pour la fenetre (favicon) -->
+    <EmbeddedResource Include="..\..\assets\icon\app.ico" LogicalName="wwwroot/favicon.ico" />
   </ItemGroup>
 
   <!-- Fichiers de langue copies dans dist\lang : on peut en ajouter sans recompiler -->

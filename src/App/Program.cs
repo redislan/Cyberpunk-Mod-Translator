@@ -86,6 +86,7 @@ app.Use(async (ctx, next) =>
 // Interface integree dans l'exe
 app.MapGet("/", () => Asset("index.html"));
 app.MapGet("/assets/{name}", (string name) => Asset(name));
+app.MapGet("/favicon.ico", () => Asset("favicon.ico"));
 
 var api = app.MapGroup("/api");
 api.MapGet("/state", () => state.GetState());
@@ -113,6 +114,9 @@ api.MapPost("/import-tsv", (PathRequest r) => state.ImportTsv(r.Path));
 api.MapPost("/export-tsv", (PathRequest r) => state.ExportTsv(r.Path));
 api.MapPost("/build", (PathRequest r) => state.Build(r.Path, r.Name));
 api.MapPost("/settings", (Settings s) => state.UpdateSettings(s));
+api.MapGet("/modlist", () => state.GetModlist());
+api.MapPost("/modlist", (ModlistRequest r) => state.LoadModlist(r));
+api.MapPost("/modlist/prefs", (ModlistPrefs p) => state.UpdateModlistPrefs(p));
 api.MapPost("/reveal", (PathRequest r) =>
 {
     state.Reveal(r.Path);

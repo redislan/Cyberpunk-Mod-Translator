@@ -17,7 +17,7 @@ public sealed class XlLocalization
 
     public static XlLocalization? Load(string path)
     {
-        var lines = File.ReadAllLines(path)
+        var lines = SharedFile.ReadAllLines(path)
             .Select(Clean)
             .Where(l => l.Text.Length > 0)
             .ToList();

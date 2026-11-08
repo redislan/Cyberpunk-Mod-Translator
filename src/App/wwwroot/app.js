@@ -29,6 +29,7 @@ const S = {
   selected: null,
   pending: new Map(),
   saveTimer: null,
+  tab: 'translate', // 'translate' ou 'modlist'
 };
 
 const $ = (id) => document.getElementById(id);
@@ -206,6 +207,10 @@ function flushOnExit() {
     navigator.sendBeacon(`/api/translations?t=${TOKEN}`, new Blob([JSON.stringify(items)], { type: 'application/json' }));
     S.pending.clear();
   }
+  if (ML.prefsDirty) {
+    navigator.sendBeacon(`/api/modlist/prefs?t=${TOKEN}`, new Blob([JSON.stringify(ML.prefs)], { type: 'application/json' }));
+    ML.prefsDirty = false;
+  }
   navigator.sendBeacon(`/api/bye?t=${TOKEN}`, new Blob(['{}'], { type: 'application/json' }));
 }
 
@@ -230,8 +235,10 @@ function renderHeader() {
     if (b.tagName === 'BUTTON') b.disabled = !p;
     else b.querySelectorAll('button').forEach((x) => { x.disabled = !p; });
   }
-  $('welcome').classList.toggle('hidden', !!p);
-  $('workspace').classList.toggle('hidden', !p);
+  const translating = S.tab === 'translate';
+  $('welcome').classList.toggle('hidden', !!p || !translating);
+  $('workspace').classList.toggle('hidden', !p || !translating);
+  $('modlistView').classList.toggle('hidden', translating);
 
   const banner = $('banner');
   if (st.compressorError) {
@@ -788,17 +795,22 @@ function pickPath({ title, mode, ext, start, okLabel }) {
 async function openMod(path) {
   if (!path) {
     path = await choosePath({ title: t('btn.open'), mode: 'mod', ext: '.zip', start: S.state.settings.mo2ModsDir, okLabel: t('open.ok'), key: 'mod' });
-    if (!path) return;
+    if (!path) return false;
   }
-  await flush();
+  // Modifications non enregistrees : on reste sur ce mod (elles sont reperees par numero de ligne,
+  // elles atterriraient dans le mauvais mod). flush() a deja affiche l'erreur.
+  if (!(await flush())) return false;
   const st = await busy(t('open.busy'), () => api('/open', { path }));
-  if (!st) return;
+  if (!st) return false;
+  S.pending.clear();
   S.state = st;
-  renderHeader();
+  S.tab = 'translate';
+  applyTab();
   await loadUnits();
   const p = st.project;
   toast(t('open.done', p.name, S.units.filter((u) => u.status !== 'code').length, p.files.length), 'ok');
   if (p.restored > 0) toast(t('open.restored', p.restored), 'ok');
+  return true;
 }
 
 async function importTranslation() {
@@ -851,6 +863,7 @@ async function save() {
 function relocalize() {
   applyStaticTexts();
   renderHeader();
+  if (S.tab === 'modlist') mlRender();
   if (S.state && S.state.project) {
     renderFiles();
     renderNotes();
@@ -940,6 +953,8 @@ async function openSettings() {
             if (!st2) return;
             S.state = st2;
             closeModal();
+            // dossier MO2, langue cible ou dossier de sortie ont pu changer : la liste est relue
+            if (S.tab === 'modlist') mlLoad({});
             if (langChanged) {
               try {
                 await loadLanguage();
@@ -1005,6 +1020,410 @@ async function buildTranslation() {
 }
 
 // -------------------------------------------------------------------------------------------------
+// Onglets
+// -------------------------------------------------------------------------------------------------
+
+/** Affiche l'onglet S.tab (les boutons propres a la traduction sont caches dans l'onglet Modlist). */
+function applyTab() {
+  const ml = S.tab === 'modlist';
+  document.body.classList.toggle('tab-modlist', ml);
+  $('tabTranslate').classList.toggle('on', !ml);
+  $('tabModlist').classList.toggle('on', ml);
+  $('tabTranslate').setAttribute('aria-selected', String(!ml));
+  $('tabModlist').setAttribute('aria-selected', String(ml));
+  renderHeader();
+}
+
+async function switchTab(tab) {
+  if (S.tab === tab) return;
+  if (tab === 'modlist') await flush();
+  S.tab = tab;
+  applyTab();
+  // La liste de MO2 est relue a chaque passage sur l'onglet : seuls les mods qui ont change sont reanalyses
+  if (tab === 'modlist') mlLoad({});
+}
+
+// -------------------------------------------------------------------------------------------------
+// Onglet Modlist : la liste de MO2, meme ordre et memes separateurs.
+// Vert = un mod « Nom - FR » est dans MO2 ; orange = du texte a traduire ; sans couleur = rien a traduire.
+// -------------------------------------------------------------------------------------------------
+
+const ML = {
+  data: null,
+  revision: -1,
+  search: '',
+  pollTimer: null,
+  prefsTimer: null,
+  prefsDirty: false,
+  loading: false,
+  // Pas de redessin pendant un clic (sinon le clic ou le double-clic se perd) ni menu ouvert
+  pointerDown: false,
+  pointerAt: 0,
+  renderPending: false,
+  profileKey: '',
+  sepMenuKey: '',
+  prefs: { profile: '', hidden: [], collapsed: [], hideDisabled: false, hiddenStatuses: [] },
+};
+
+/** Statuts des mods, dans l'ordre des filtres. color : null = sans couleur. */
+const ML_STATUS = {
+  todo: { label: 'ml.status.todo', tip: 'ml.status.todo.tip', color: 'var(--ml-todo)' },
+  translated: { label: 'ml.status.translated', tip: 'ml.status.translated.tip', color: 'var(--ml-translated)' },
+  none: { label: 'ml.status.none', tip: 'ml.status.none.tip', color: null },
+  trad: { label: 'ml.status.trad', tip: 'ml.status.trad.tip', color: 'var(--ml-trad)' },
+  error: { label: 'ml.status.error', tip: 'ml.status.error.tip', color: 'var(--ml-error)' },
+  pending: { label: 'ml.status.pending', tip: null, color: 'var(--accent-2)' },
+};
+
+/** Relit la liste de MO2 (profile : changer de profil, force : tout reanalyser). */
+async function mlLoad(body) {
+  clearTimeout(ML.pollTimer);
+  if (!S.state.settings.mo2ModsDir) {
+    ML.data = null;
+    mlRender();
+    return;
+  }
+  ML.loading = true;
+  if (!ML.data) mlRender();
+  try {
+    ML.data = await api('/modlist', body);
+    ML.revision = -1;
+  } catch (e) {
+    reportError(e, 'modlist');
+    ML.data = { error: e.message, rows: [], profiles: [], scanning: { active: false } };
+  } finally {
+    ML.loading = false;
+  }
+  mlRender();
+  mlSchedulePoll();
+}
+
+function mlSchedulePoll() {
+  clearTimeout(ML.pollTimer);
+  if (ML.data && ML.data.scanning && ML.data.scanning.active && S.tab === 'modlist') ML.pollTimer = setTimeout(mlPoll, 700);
+  else if (ML.renderPending) setTimeout(mlRenderWhenIdle, 300);
+}
+
+/** L'utilisateur est en train de cliquer, ou un menu est ouvert : un redessin lui volerait son clic. */
+function mlInteracting() {
+  return ML.pointerDown || Date.now() - ML.pointerAt < 500 ||
+    !$('mlSepMenu').classList.contains('hidden') || document.activeElement === $('mlProfile');
+}
+
+function mlRenderWhenIdle() {
+  if (!ML.renderPending || S.tab !== 'modlist') return;
+  if (mlInteracting()) {
+    setTimeout(mlRenderWhenIdle, 300);
+    return;
+  }
+  ML.renderPending = false;
+  mlRender();
+}
+
+async function mlPoll() {
+  try {
+    const d = await api('/modlist');
+    if (!ML.data || d.revision !== ML.data.revision) ML.renderPending = true;
+    ML.data = d;
+    if (ML.renderPending && !mlInteracting()) {
+      ML.renderPending = false;
+      mlRender();
+    }
+  } catch (e) {
+    reportError(e, 'modlist');
+  }
+  mlSchedulePoll();
+}
+
+function mlSavePrefs() {
+  clearTimeout(ML.prefsTimer);
+  ML.prefsDirty = true;
+  ML.prefsTimer = setTimeout(() => {
+    ML.prefsDirty = false;
+    api('/modlist/prefs', ML.prefs).catch((e) => {
+      reportError(e, 'modlist');
+      toast(e.message, 'error');
+    });
+  }, 400);
+}
+
+const mlList = (name) => ML.prefs[name] || (ML.prefs[name] = []);
+const mlHas = (name, value) => mlList(name).includes(value);
+function mlToggle(name, value, on) {
+  const list = mlList(name);
+  const i = list.indexOf(value);
+  if (on && i < 0) list.push(value);
+  if (!on && i >= 0) list.splice(i, 1);
+  mlSavePrefs();
+}
+
+/** Lignes d'un mod affichees (filtres de statut, mods desactives, recherche). */
+function mlVisible(r) {
+  if (mlHas('hiddenStatuses', r.status)) return false;
+  if (ML.prefs.hideDisabled && !r.enabled) return false;
+  const q = ML.search.trim().toLowerCase();
+  return !q || r.display.toLowerCase().includes(q);
+}
+
+const mlFiltering = () => !!ML.search.trim() || ML.prefs.hideDisabled || mlList('hiddenStatuses').length > 0;
+
+function mlRender() {
+  const list = $('mlList');
+  const scroll = list.scrollTop;
+  const d = ML.data;
+  const configured = !!S.state.settings.mo2ModsDir;
+  $('mlToolbar').classList.toggle('hidden', !configured || !d || !!d.error);
+  $('mlFilters').classList.toggle('hidden', !configured || !d || !!d.error);
+  $('mlSummary').replaceChildren();
+  list.replaceChildren();
+
+  if (!configured) {
+    list.append(el('div', { class: 'ml-card' },
+      el('h2', {}, t('ml.setup.title')),
+      el('p', {}, t('ml.setup.text')),
+      el('p', {}, t('ml.setup.legend', langSuffix(targetLang()))),
+      el('div', { class: 'buttons' }, el('button', { class: 'btn primary', onclick: openSettings }, t('settings.title')))));
+    return;
+  }
+  if (!d) {
+    list.append(el('div', { class: 'empty' }, t('busy.default')));
+    return;
+  }
+  if (d.error) {
+    list.append(el('div', { class: 'ml-card' },
+      el('h2', {}, t('ml.error.title')),
+      el('div', { class: 'mono' }, d.error),
+      el('div', { class: 'buttons' },
+        el('button', { class: 'btn primary', onclick: openSettings }, t('settings.title')),
+        el('button', { class: 'btn', onclick: () => mlLoad({}) }, t('ml.retry')))));
+    return;
+  }
+
+  mlRenderToolbar(d);
+  mlRenderSummary(d);
+
+  const rows = d.rows;
+  const filtering = mlFiltering();
+  const hidden = new Set(mlList('hidden'));
+  const collapsed = new Set(mlList('collapsed'));
+  const children = new Map();
+  for (const r of rows) {
+    if (r.kind === 'sep') continue;
+    if (!children.has(r.group)) children.set(r.group, []);
+    children.get(r.group).push(r);
+  }
+
+  let shown = 0;
+  // Mods au-dessus du premier separateur : pas d'en-tete, comme dans MO2
+  for (const r of (children.get(-1) || []).filter(mlVisible)) {
+    list.append(mlRowEl(r));
+    shown++;
+  }
+  rows.forEach((sep, index) => {
+    if (sep.kind !== 'sep' || hidden.has(sep.name)) return;
+    const kids = children.get(index) || [];
+    const visible = kids.filter(mlVisible);
+    if (filtering && visible.length === 0) return;
+    const isCollapsed = collapsed.has(sep.name) && !ML.search.trim();
+    const group = el('div', { class: 'ml-group' }, mlSepEl(sep, kids, isCollapsed));
+    if (!isCollapsed) for (const r of visible) group.append(mlRowEl(r));
+    list.append(group);
+    shown += visible.length;
+  });
+  if (shown === 0 && rows.some((r) => r.kind !== 'sep')) list.append(el('div', { class: 'empty' }, t('ml.empty')));
+  list.scrollTop = scroll;
+}
+
+function mlRenderToolbar(d) {
+  // Profils
+  const select = $('mlProfile');
+  const profileKey = JSON.stringify([d.profiles, d.profile, d.activeProfile, UI.code]);
+  if (profileKey !== ML.profileKey) {
+    ML.profileKey = profileKey;
+    select.replaceChildren(...d.profiles.map((p) => el('option', { value: p, selected: p === d.profile },
+      p === d.activeProfile ? t('ml.profile.active', p) : p)));
+  }
+  select.parentElement.classList.toggle('hidden', d.profiles.length < 2);
+
+  // Filtres de statut, avec les compteurs
+  const mods = d.rows.filter((r) => r.kind !== 'sep');
+  const chips = $('mlChips');
+  chips.replaceChildren();
+  const suffix = d.suffix || langSuffix(targetLang());
+  for (const [key, info] of Object.entries(ML_STATUS)) {
+    const count = mods.filter((r) => r.status === key).length;
+    if (count === 0 && (key === 'error' || key === 'pending' || key === 'trad')) continue;
+    const on = !mlHas('hiddenStatuses', key);
+    chips.append(el('button', {
+      class: `chip ${on ? 'on' : ''}`,
+      title: info.tip ? t(info.tip, suffix) : '',
+      onclick: () => {
+        mlToggle('hiddenStatuses', key, on);
+        mlRender();
+      },
+    }, el('span', { class: `dot ${info.color ? '' : 'hollow'}`, style: info.color ? `background:${info.color}` : null }), `${t(info.label)} (${count})`));
+  }
+  $('mlHideDisabled').checked = !!ML.prefs.hideDisabled;
+
+  // Bouton replier / deplier
+  const seps = d.rows.filter((r) => r.kind === 'sep');
+  const allCollapsed = seps.length > 0 && seps.every((r) => mlHas('collapsed', r.name));
+  const btn = $('btnMlCollapse');
+  btn.textContent = allCollapsed ? t('ml.expandAll') : t('ml.collapseAll');
+  btn.dataset.expand = allCollapsed ? '1' : '';
+  btn.disabled = seps.length === 0;
+  mlRenderSepMenu(d);
+}
+
+/** Menu « Separateurs » : une case par separateur, decochee = cache (avec tous ses mods). */
+function mlRenderSepMenu(d) {
+  const menu = $('mlSepMenu');
+  const seps = d.rows.filter((r) => r.kind === 'sep');
+  const key = JSON.stringify([seps.map((r) => [r.name, r.color]), UI.code]);
+  if (key === ML.sepMenuKey) {
+    for (const cb of menu.querySelectorAll('input[data-name]')) cb.checked = !mlHas('hidden', cb.dataset.name);
+    return;
+  }
+  ML.sepMenuKey = key;
+  menu.replaceChildren();
+  if (seps.length === 0) {
+    menu.append(el('div', { class: 'none' }, t('ml.separators.none')));
+    return;
+  }
+  const setAll = (hide) => {
+    ML.prefs.hidden = hide ? seps.map((r) => r.name) : [];
+    mlSavePrefs();
+    mlRender();
+  };
+  menu.append(el('div', { class: 'ml-seps-tools' },
+    el('button', { class: 'btn small', onclick: () => setAll(false) }, t('ml.separators.showAll')),
+    el('button', { class: 'btn small', onclick: () => setAll(true) }, t('ml.separators.hideAll'))));
+  for (const sep of seps) {
+    const cb = el('input', { type: 'checkbox', checked: !mlHas('hidden', sep.name), 'data-name': sep.name });
+    cb.addEventListener('change', () => {
+      mlToggle('hidden', sep.name, !cb.checked);
+      mlRender();
+    });
+    menu.append(el('label', {}, cb,
+      el('span', { class: 'swatch', style: `background:${sep.color || 'var(--line)'}` }), sep.display));
+  }
+}
+
+function mlRenderSummary(d) {
+  const box = $('mlSummary');
+  const mods = d.rows.filter((r) => r.kind === 'mod');
+  const translated = mods.filter((r) => r.status === 'translated').length;
+  const withText = translated + mods.filter((r) => r.status === 'todo').length;
+  if (withText > 0) {
+    box.append(el('span', {}, t('ml.progress', translated, withText)),
+      el('div', { class: 'ml-bar' }, el('div', { style: `width:${Math.round((translated * 100) / withText)}%` })));
+  } else if (!d.scanning.active) {
+    box.append(el('span', {}, t('ml.progress.none')));
+  }
+  const hiddenCount = d.rows.filter((r) => r.kind === 'sep' && mlHas('hidden', r.name)).length;
+  if (hiddenCount) {
+    box.append(el('span', {}, t('ml.hiddenSeps', hiddenCount), ' · ',
+      el('a', { onclick: () => { ML.prefs.hidden = []; mlSavePrefs(); mlRender(); } }, t('ml.separators.showAll'))));
+  }
+  if (d.noDll) box.append(el('span', { class: 'warn', title: t('ml.noDll') }, '⚠ ' + t('statusbar.dllMissing')));
+  if (d.scanning.active) {
+    const sc = d.scanning;
+    box.append(el('span', { title: sc.current || '' }, t('ml.scanning', sc.done, sc.total)),
+      el('div', { class: 'ml-bar scan' }, el('div', { style: `width:${sc.total ? Math.round((sc.done * 100) / sc.total) : 0}%` })));
+  } else {
+    box.append(el('span', { class: 'ok' }, t('ml.upToDate')),
+      el('a', { title: t('ml.rescan.tip'), onclick: () => mlLoad({ force: true }) }, t('ml.rescan')));
+  }
+}
+
+function mlSepEl(sep, kids, isCollapsed) {
+  const mods = kids.filter((r) => r.kind === 'mod');
+  const todo = mods.filter((r) => r.status === 'todo').length;
+  const done = mods.filter((r) => r.status === 'translated').length;
+  const node = el('div', {
+    class: `ml-sep ${isCollapsed ? 'collapsed' : ''}`,
+    style: sep.color ? `--sep-color:${sep.color}` : null,
+    title: t('ml.sep.toggle'),
+    onclick: () => {
+      mlToggle('collapsed', sep.name, !mlHas('collapsed', sep.name));
+      mlRender();
+    },
+  },
+  el('span', { class: 'chev' }, '▼'),
+  el('span', { class: 'sname' }, sep.display),
+  el('span', { class: 'scount' },
+    el('span', {}, t('ml.sep.count', kids.length)),
+    todo ? el('span', { class: 't' }, t('ml.sep.todo', todo)) : null,
+    done ? el('span', { class: 'g' }, t('ml.sep.translated', done)) : null),
+  el('button', {
+    class: 'hide',
+    title: t('ml.sep.hide'),
+    onclick: (e) => {
+      e.stopPropagation();
+      mlToggle('hidden', sep.name, true);
+      mlRender();
+    },
+  }, '✕'));
+  return node;
+}
+
+/** Texte sous le nom du mod : ce qui reste a faire, ou par quoi il est traduit. */
+function mlInfo(r) {
+  switch (r.status) {
+    case 'todo': {
+      const parts = [];
+      if (r.todo) parts.push(el('b', {}, t('ml.info.todo', r.todo)));
+      if (r.check) parts.push(t('ml.info.check', r.check));
+      if (r.saved) parts.push(t('ml.info.started', r.saved, r.todo + r.check));
+      return parts.flatMap((x, i) => (i ? [' · ', x] : [x]));
+    }
+    case 'translated': return [el('b', {}, t('ml.info.translated', r.translation))];
+    case 'none': return [r.done ? t('ml.info.authorDone', r.done) : t('ml.info.none')];
+    case 'trad': return [r.originalFound ? t('ml.info.trad', r.original) : t('ml.info.tradOrphan')];
+    case 'error': return [t('ml.info.error', r.error || '')];
+    default: return [t('ml.info.pending')];
+  }
+}
+
+function mlRowEl(r) {
+  const tags = [];
+  if (!r.enabled) tags.push(el('span', { class: 'ml-tag' }, r.notInProfile ? t('ml.tag.notInProfile') : t('ml.tag.disabled')));
+  if (r.translation && !r.translationEnabled) {
+    tags.push(el('span', { class: 'ml-tag warn', title: t('ml.tag.tradDisabled.tip', r.translation) }, t('ml.tag.tradDisabled')));
+  }
+  if (r.built && r.status !== 'translated') {
+    const name = `${r.name} - ${ML.data.suffix}`;
+    tags.push(el('span', { class: 'ml-tag info', title: t('ml.tag.built.tip', r.built, name) }, t('ml.tag.built')));
+  }
+  // Bouton : seulement si le mod a des lignes (sinon l'ouverture echouerait sur « aucun texte »)
+  const hasText = r.todo + r.check + r.done > 0;
+  const canOpen = r.kind === 'mod' && r.path && hasText && r.status !== 'error';
+  const action = canOpen
+    ? el('button', {
+      class: `btn small ${r.status === 'todo' ? 'go' : ''}`,
+      onclick: (e) => {
+        e.stopPropagation();
+        mlOpen(r);
+      },
+    }, r.status === 'todo' ? t('ml.btn.translate') : t('ml.btn.open'))
+    : el('span', { class: 'act' });
+  const info = mlInfo(r);
+  return el('div', {
+    class: `ml-row st-${r.status} ${r.enabled ? '' : 'off'}`,
+    title: r.path || '',
+    ondblclick: canOpen ? () => mlOpen(r) : null,
+  },
+  el('div', { class: 'mname' }, r.display),
+  el('div', { class: 'minfo', title: r.status === 'error' ? r.error : null }, ...info),
+  el('div', { class: 'ml-tags' }, ...tags),
+  action);
+}
+
+async function mlOpen(r) {
+  await openMod(r.path);
+}
+
+// -------------------------------------------------------------------------------------------------
 // Demarrage
 // -------------------------------------------------------------------------------------------------
 
@@ -1019,7 +1438,51 @@ function bind() {
     e.stopPropagation();
     $('tsvMenu').classList.toggle('hidden');
   });
-  document.addEventListener('click', () => $('tsvMenu').classList.add('hidden'));
+  document.addEventListener('click', () => {
+    $('tsvMenu').classList.add('hidden');
+    $('mlSepMenu').classList.add('hidden');
+  });
+
+  // Onglets et onglet Modlist
+  $('tabTranslate').addEventListener('click', () => switchTab('translate'));
+  $('tabModlist').addEventListener('click', () => switchTab('modlist'));
+  $('btnMlSeps').addEventListener('click', (e) => {
+    e.stopPropagation();
+    $('mlSepMenu').classList.toggle('hidden');
+  });
+  $('mlSepMenu').addEventListener('click', (e) => e.stopPropagation());
+  $('modlistView').addEventListener('pointerdown', () => {
+    ML.pointerDown = true;
+    ML.pointerAt = Date.now();
+  });
+  document.addEventListener('pointerup', () => {
+    ML.pointerDown = false;
+    ML.pointerAt = Date.now();
+  });
+  $('btnMlRefresh').addEventListener('click', () => mlLoad({}));
+  $('btnMlCollapse').addEventListener('click', () => {
+    const expand = $('btnMlCollapse').dataset.expand === '1';
+    ML.prefs.collapsed = expand ? [] : ML.data.rows.filter((r) => r.kind === 'sep').map((r) => r.name);
+    mlSavePrefs();
+    mlRender();
+  });
+  $('mlProfile').addEventListener('change', () => {
+    ML.prefs.profile = $('mlProfile').value;
+    mlLoad({ profile: $('mlProfile').value });
+  });
+  $('mlHideDisabled').addEventListener('change', () => {
+    ML.prefs.hideDisabled = $('mlHideDisabled').checked;
+    mlSavePrefs();
+    mlRender();
+  });
+  let mlSearchTimer = null;
+  $('mlSearch').addEventListener('input', () => {
+    clearTimeout(mlSearchTimer);
+    mlSearchTimer = setTimeout(() => {
+      ML.search = $('mlSearch').value;
+      mlRender();
+    }, 150);
+  });
   $('btnExportTsv').addEventListener('click', exportTsv);
   $('btnImportTsv').addEventListener('click', importTsv);
 
@@ -1042,12 +1505,15 @@ function bind() {
     if (e.key === 'Escape' && !$('modal').classList.contains('hidden')) closeModal();
     if (e.ctrlKey && e.key.toLowerCase() === 's') {
       e.preventDefault();
-      if (S.state && S.state.project) save();
+      if (S.state && S.state.project && S.tab === 'translate') save();
     }
-    if (e.ctrlKey && e.key.toLowerCase() === 'f' && S.state && S.state.project) {
-      e.preventDefault();
-      $('search').focus();
-      $('search').select();
+    if (e.ctrlKey && e.key.toLowerCase() === 'f') {
+      const box = S.tab === 'modlist' ? $('mlSearch') : (S.state && S.state.project ? $('search') : null);
+      if (box && box.offsetParent !== null) {
+        e.preventDefault();
+        box.focus();
+        box.select();
+      }
     }
   });
 
@@ -1067,6 +1533,8 @@ async function init() {
   document.body.classList.remove('i18n-loading');
   try {
     await refreshState();
+    if (S.state.settings.modlist) ML.prefs = S.state.settings.modlist;
+    applyTab();
     if (S.state.project) await loadUnits();
     renderDetail(null);
   } catch (e) {

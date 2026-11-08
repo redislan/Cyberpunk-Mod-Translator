@@ -77,7 +77,7 @@ public sealed class PlainTextFile
 
     public static PlainTextFile Load(string fullPath, string relativePath)
     {
-        var bytes = File.ReadAllBytes(fullPath);
+        var bytes = SharedFile.ReadAllBytes(fullPath);
         var bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
         var body = bom ? bytes[3..] : bytes;
         Encoding encoding;

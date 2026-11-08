@@ -39,7 +39,7 @@ public static class Tsv
 
     private static string ReadText(string path)
     {
-        var bytes = File.ReadAllBytes(path);
+        var bytes = SharedFile.ReadAllBytes(path);
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
             return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
         if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)

@@ -1,4 +1,4 @@
-# Cyberpunk Mod Translator — v0.6.0
+# Cyberpunk Mod Translator — v0.7.1
 
 *[Version française](README.fr.md)*
 
@@ -7,6 +7,7 @@ Translate Cyberpunk 2077 mods into your language without WolvenKit. Open a mod, 
 - Works with texts inside `.archive` files (onscreens and subtitles, including the ones declared in ArchiveXL `.xl` files).
 - Works with plain-text mods: `.lua` (CET), `.reds` (redscript), `.yaml` (TweakXL), `.json`, `.tweak`.
 - Never edits the original mod: the translation is a separate mod you install below it in MO2.
+- **Modlist** tab: your MO2 list with its separators, and for each mod whether it is translated, still to translate, or has nothing to translate.
 - Interface in English and French, and anyone can add a language (see [Interface languages](#interface-languages)).
 
 Made by Sterben. MIT license.
@@ -40,8 +41,26 @@ The rest of the interface:
 - **Shortcuts**: `Ctrl+Enter` or `Alt+↓` for the next line, `Alt+↑` for the previous one, `Ctrl+S` to save, `Ctrl+F` to search.
 - **Reuse a translation**: picks up the texts of an existing translation (folder or zip), for example to update a translation after a new version of the mod.
 - **TSV**: export and import to work in Excel.
-- **Settings**: interface language, game folder (for the compression DLL), MO2 "mods" folder, output folder, target language.
-- **Data**: settings and saves are in `%AppData%\CyberpunkModTranslator` (`reglages.json`, `projets\*.tsv`), with one log per session in `logs\` (the last 10 are kept). Interface languages are next to the exe, in `lang\`.
+- **Settings**: interface language, game folder (for the compression DLL), MO2 "mods" folder (also read by the Modlist tab), output folder, target language.
+- **Data**: settings and saves are in `%AppData%\CyberpunkModTranslator` (`reglages.json`, `projets\*.tsv`, `modlist-cache.json`), with one log per session in `logs\` (the last 10 are kept). Interface languages are next to the exe, in `lang\`.
+
+## The Modlist tab
+
+The same list as MO2 (same order, same separators, same profile), with a colour for each mod:
+
+- **Green: translated.** A mod named `<Mod> - FR` (or `- DE`…, depending on the target language) is in MO2. The name is enough: the tool doesn't look inside it.
+- **Orange: to translate.** The mod has lines to translate (or to check). The line shows how many, and how far your saved work goes (“started: 12 / 40”).
+- **No colour: nothing to translate.** No text was found, or the author already translated it.
+
+The rest of the tab:
+
+- **Translate** (or a double-click) opens the mod in the Translation tab.
+- **Filters**: by colour (click the counters), “Hide disabled mods”, search, and **Separators ▾** to hide whole separators. The ✕ on a separator hides it too, and a click on it collapses it. These choices are kept.
+- **MO2 profile**: the profile active in MO2 by default; the other ones are in the list.
+- **“built, not in MO2 yet”**: the translation zip is in the output folder, but no `<Mod> - FR` mod is in MO2 yet.
+- The `… - FR` mods themselves are in grey (“Translation mods” filter).
+- Each mod is analysed in the background, exactly like when you open it. The result is kept (`modlist-cache.json`): a mod is only analysed again when its files change, or its translation save. **Refresh** reads the MO2 list again; **Analyse all again** forgets the kept results.
+- MO2's files are only read, never written. The `profiles` folder is the one next to the `mods` folder set in Settings. The active profile comes from `ModOrganizer.ini`, found next to the `mods` folder, in a neighbouring folder (portable MO2 installed apart from its mods) or in `%LocalAppData%\ModOrganizer`. Without it, the profile whose list changed last is used.
 
 ## Reporting a bug
 
@@ -117,6 +136,8 @@ The `context` column shows the code line the string comes from (plain files) or 
 
 You can edit the TSV in Excel. The program also reads files saved again as "Text (Tab delimited)" or "Unicode Text", and cells that Excel wraps in quotes.
 
+Don't edit the `english` column: on import, a line whose English no longer matches the mod is skipped, with a warning. This avoids writing a translation in the wrong place if the mod changed since the export.
+
 ## How the program picks the file to write (archives)
 
 1. If the `.xl` declares a file for the target language (`fr-fr`, `de-de`…), that's the one replaced. That's the case for Night City Interactions.
@@ -177,6 +198,7 @@ If only the first one is translated, `Equals(category, "Background")` no longer 
 - **Tricky files**: comments containing quotes, Lua long strings `[[...]]`, escapes, prefixed redscript strings, YAML values containing `:`, JSON. The output files stay valid.
 - **v0.6, on a real modlist of 52 mods** (about 23,000 strings): every change in the sorting was compared before/after; only the expected strings moved (debug messages, settings keys, file protocol, YAML comments). The 38 translations built from them came out byte for byte identical before and after the rewrite of the plain-file readers.
 - **Damaged archives**: sizes and positions read from an archive are checked before use (index, file count, segments, unpacked size up to 1 GB). A damaged or booby-trapped archive gives a clear error instead of crashing the tool.
+- **v0.7, Modlist tab**: MO2's files were read on a real instance (portable MO2 installed in a folder next to its mods, 3 profiles, 94 entries, separators with and without a colour, `modlist.txt` with Windows line breaks). The whole tab was then tested on a copy of that list: statuses, kept results, profile change, missing game DLL, damaged archive.
 - **On every build**, the program reads back everything it just wrote (archive, texts, plain files) and stops if anything doesn't match.
 - **Tags**: `{int_0}`, `<Rich ...>`, `%d`, `\(...)` and line breaks are compared between the English and the translation, with a warning if they differ.
 
@@ -201,6 +223,7 @@ If only the first one is translated, `Equals(category, "Background")` no longer 
 | `Core/TextClassifier.cs` | Text / code sorting of the strings |
 | `Core/Scanners/` | One reader per language (`LuaScanner`, `RedsScanner`, `YamlScanner`, `JsonScanner`) on a common base (`SourceScanner`); `StringSyntax` holds the quotes and escapes of each language, `CodeContext` finds the function call around a string, `FileRules` the whole-file rules |
 | `Core/ModPackage.cs` | Opening a mod (folder or zip) |
+| `Core/Mo2.cs` | Reading MO2: instance, profiles, `modlist.txt` in MO2's order, separator colours (`meta.ini`) |
 | `Core/TranslationProject.cs` | Analysis, TSV, reusing a translation, building the patch |
 | `Core/Tsv.cs` | TSV files (including ones saved again by Excel) |
 | `Core/UiText.cs` | Interface languages: reading `lang\*.json`, English fallback |
@@ -209,8 +232,10 @@ If only the first one is translated, `Equals(category, "Background")` no longer 
 | `Cli/Program.cs` | The `cmt` command line |
 | `App/Program.cs` | The app's local server, opening the window |
 | `App/AppState.cs` | Settings, open project, auto-save, built-in browser |
+| `App/ModlistService.cs` | Modlist tab: status of each mod, background analysis, kept results |
 | `App/NativeDialog.cs` | The Windows "Open" window (direct shell call, no dependency) |
 | `App/wwwroot/` | Interface (HTML, CSS, JavaScript), built into the exe |
+| `assets/icon/` | The app icon (`app.ico`, the yellow CMT badge) and `make_icon.py`, the script that draws it |
 
 The file formats were studied from WolvenKit's documentation and source code, but this code is written from scratch, without copying anything from WolvenKit (GPL). That's why it can stay under the MIT license.
 

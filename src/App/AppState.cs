@@ -35,6 +35,8 @@ public sealed class Settings
     /// <summary>Langue de l'interface : "" = automatique (langue de Windows), sinon en, fr, de...</summary>
     public string UiLang { get; set; } = "";
     public List<string> RecentMods { get; set; } = new();
+    /// <summary>Choix de l'onglet Modlist (profil, separateurs caches ou replies, filtres).</summary>
+    public ModlistPrefs Modlist { get; set; } = new();
 }
 
 public record PathRequest(string Path, string? Name = null);
@@ -54,6 +56,7 @@ public sealed class AppState : IDisposable
     private TranslationProject? _project;
     private string? _projectPath;
     private int _restored;
+    private readonly ModlistService _modlist;
 
     public Settings Settings { get; private set; }
     public DateTime LastPing { get; private set; } = DateTime.UtcNow;
@@ -69,7 +72,9 @@ public sealed class AppState : IDisposable
         if (!string.IsNullOrEmpty(forcedGameDir)) Settings.GameDir = forcedGameDir;
         if (string.IsNullOrEmpty(Settings.GameDir))
             Settings.GameDir = GameLocator.FindGameDirectories().FirstOrDefault() ?? "";
+        Settings.Modlist ??= new ModlistPrefs();
         UiText.Use(Settings.UiLang);
+        _modlist = new ModlistService(forcedOodle);
         Log.Info($"Reglages : jeu = {Show(Settings.GameDir)}, mods MO2 = {Show(Settings.Mo2ModsDir)}, sortie = {Show(Settings.OutputDir)}, " +
                  $"langue cible = {Settings.Lang}, interface = {UiText.Current} ({Show(Settings.UiLang, "auto")})");
     }
@@ -142,8 +147,11 @@ public sealed class AppState : IDisposable
 
     private void SaveSettings()
     {
+        // Fichier temporaire puis remplacement : un arret brutal pendant l'ecriture ne peut pas vider les reglages
         Directory.CreateDirectory(AppPaths.Data);
-        File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(Settings, JsonOptions));
+        var tmp = AppPaths.SettingsFile + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(Settings, JsonOptions));
+        File.Move(tmp, AppPaths.SettingsFile, true);
     }
 
     public object UpdateSettings(Settings s)
@@ -151,6 +159,7 @@ public sealed class AppState : IDisposable
         lock (_lock)
         {
             var gameChanged = !string.Equals(s.GameDir?.Trim(), Settings.GameDir, StringComparison.OrdinalIgnoreCase);
+            var before = (Settings.Mo2ModsDir, Settings.Lang, Settings.OutputDir, Settings.GameDir);
             Settings.GameDir = s.GameDir?.Trim() ?? "";
             Settings.Mo2ModsDir = s.Mo2ModsDir?.Trim() ?? "";
             Settings.OutputDir = string.IsNullOrWhiteSpace(s.OutputDir) ? new Settings().OutputDir : s.OutputDir.Trim();
@@ -165,6 +174,8 @@ public sealed class AppState : IDisposable
                 _compressor = null;
             }
             SaveSettings();
+            if (before != (Settings.Mo2ModsDir, Settings.Lang, Settings.OutputDir, Settings.GameDir))
+                _modlist.Invalidate();
             return GetState();
         }
     }
@@ -450,6 +461,56 @@ public sealed class AppState : IDisposable
     }
 
     // -----------------------------------------------------------------------------------------
+    // Onglet Modlist
+    // -----------------------------------------------------------------------------------------
+
+    private ModlistContext MakeModlistContext(string? profile)
+    {
+        lock (_lock)
+            return new ModlistContext(Settings.Mo2ModsDir, Settings.Lang, Settings.OutputDir, Settings.GameDir,
+                profile ?? Settings.Modlist.Profile);
+    }
+
+    public object GetModlist() => _modlist.Get(() => MakeModlistContext(null));
+
+    /// <summary>Relit la liste de MO2 (et change de profil si demande), puis analyse ce qui a change.</summary>
+    public object LoadModlist(ModlistRequest r)
+    {
+        var profile = r.Profile?.Trim();
+        if (profile != null)
+        {
+            lock (_lock)
+            {
+                Settings.Modlist.Profile = profile;
+                try
+                {
+                    SaveSettings();
+                }
+                catch (Exception ex)
+                {
+                    // Le profil est quand meme affiche ; il ne sera simplement pas retenu au prochain lancement
+                    Log.Warn("Profil MO2 choisi non enregistre dans les reglages", ex);
+                }
+            }
+        }
+        return _modlist.Load(MakeModlistContext(profile), r.Force);
+    }
+
+    public object UpdateModlistPrefs(ModlistPrefs p)
+    {
+        lock (_lock)
+        {
+            var current = Settings.Modlist;
+            current.Hidden = (p.Hidden ?? new()).Distinct().ToList();
+            current.Collapsed = (p.Collapsed ?? new()).Distinct().ToList();
+            current.HideDisabled = p.HideDisabled;
+            current.HiddenStatuses = (p.HiddenStatuses ?? new()).Distinct().ToList();
+            SaveSettings();
+            return new { saved = true };
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
     // Explorateur de fichiers
     // -----------------------------------------------------------------------------------------
 
@@ -574,6 +635,7 @@ public sealed class AppState : IDisposable
 
     public void Dispose()
     {
+        // Le travail de traduction d'abord : l'arret de l'analyse de fond peut prendre quelques secondes
         lock (_lock)
         {
             try
@@ -584,6 +646,10 @@ public sealed class AppState : IDisposable
             {
                 Log.Error("Derniere sauvegarde du travail impossible a la fermeture", ex);
             }
+        }
+        _modlist.Dispose();
+        lock (_lock)
+        {
             _project?.Dispose();
             _compressor?.Dispose();
         }
