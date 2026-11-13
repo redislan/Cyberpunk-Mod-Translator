@@ -36,14 +36,50 @@ internal static class StringSyntax
     public static (string Value, int End, bool Ok) ReadLua(string s, int start, char quote)
     {
         var sb = new StringBuilder();
+        // Octets ecrits un par un (\195\169, \xC3\xA9) : en Lua ce sont les octets UTF-8 d'un caractere accentue.
+        // On les rassemble pour afficher « é », pas « Ã© ».
+        var bytes = new List<byte>();
+        void Flush()
+        {
+            if (bytes.Count == 0) return;
+            var raw = bytes.ToArray();
+            bytes.Clear();
+            try
+            {
+                sb.Append(new UTF8Encoding(false, true).GetString(raw));
+            }
+            catch (DecoderFallbackException)
+            {
+                foreach (var b in raw) sb.Append((char)b); // pas de l'UTF-8 : un caractere par octet, comme avant
+            }
+        }
+        void AppendCode(int code)
+        {
+            if (code is >= 0x80 and <= 0xFF) bytes.Add((byte)code);
+            else
+            {
+                Flush();
+                sb.Append((char)code);
+            }
+        }
+
         var i = start + 1;
         while (i < s.Length)
         {
             var c = s[i];
-            if (c == quote) return (sb.ToString(), i + 1, true);
-            if (c == '\n') return (sb.ToString(), i, false);
+            if (c == quote)
+            {
+                Flush();
+                return (sb.ToString(), i + 1, true);
+            }
+            if (c == '\n')
+            {
+                Flush();
+                return (sb.ToString(), i, false);
+            }
             if (c != '\\')
             {
+                Flush();
                 sb.Append(c);
                 i++;
                 continue;
@@ -51,6 +87,7 @@ internal static class StringSyntax
             if (i + 1 >= s.Length) break;
             var n = s[i + 1];
             i += 2;
+            if (n != 'x' && !char.IsDigit(n)) Flush();
             switch (n)
             {
                 case 'n': sb.Append('\n'); break;
@@ -67,9 +104,10 @@ internal static class StringSyntax
                 case 'x':
                     if (i + 2 <= s.Length && int.TryParse(s.AsSpan(i, 2), System.Globalization.NumberStyles.HexNumber, null, out var hx))
                     {
-                        sb.Append((char)hx);
+                        AppendCode(hx);
                         i += 2;
                     }
+                    else Flush();
                     break;
                 case 'u':
                     if (i < s.Length && s[i] == '{')
@@ -87,12 +125,13 @@ internal static class StringSyntax
                     {
                         var digits = n.ToString();
                         while (digits.Length < 3 && i < s.Length && char.IsDigit(s[i])) digits += s[i++];
-                        sb.Append((char)int.Parse(digits));
+                        AppendCode(int.Parse(digits));
                     }
                     else sb.Append(n); // \\ \" \'
                     break;
             }
         }
+        Flush();
         return (sb.ToString(), s.Length, false);
     }
 
@@ -121,8 +160,59 @@ internal static class StringSyntax
     }
 
     /// <summary>
+    /// Fin d'une expression \(...) d'une chaine interpolee : position juste apres la parenthese qui la referme.
+    /// Les parentheses imbriquees et les chaines de l'expression (GetLocalizedText("Cle")) sont sautees.
+    /// <paramref name="open"/> est la position de la parenthese ouvrante.
+    /// </summary>
+    private static int SkipInterpolation(string s, int open)
+    {
+        var depth = 0;
+        var i = open;
+        while (i < s.Length)
+        {
+            var c = s[i];
+            if (c == '"')
+            {
+                // chaine dans l'expression : jusqu'au guillemet fermant
+                i++;
+                while (i < s.Length && s[i] != '"')
+                    i += s[i] == '\\' ? 2 : 1;
+                i++;
+                continue;
+            }
+            if (c == '(') depth++;
+            else if (c == ')' && --depth == 0) return i + 1;
+            else if (c == '\n') return i; // expression jamais refermee sur la ligne : on s'arrete la
+            i++;
+        }
+        return s.Length;
+    }
+
+    /// <summary>
+    /// Chaine interpolee s"...\(expr)..." : texte brut entre les guillemets et position de fin. Un guillemet a
+    /// l'interieur d'une expression (s"Prix : \(GetLocalizedText("Cle"))") ne ferme pas la chaine.
+    /// </summary>
+    public static (string Raw, int End) ReadRedsInterpolated(string s, int start)
+    {
+        var i = start + 1;
+        while (i < s.Length)
+        {
+            var c = s[i];
+            if (c == '"') return (s[(start + 1)..i], i + 1);
+            if (c == '\\' && i + 1 < s.Length)
+            {
+                i = s[i + 1] == '(' ? SkipInterpolation(s, i + 1) : i + 2;
+                continue;
+            }
+            i++;
+        }
+        return (s[(start + 1)..], s.Length);
+    }
+
+    /// <summary>
     /// Chaine interpolee s"...\(expr)..." : on garde le texte brut tel que l'utilisateur l'a ecrit,
-    /// en echappant seulement les guillemets nus et les retours a la ligne.
+    /// en echappant seulement les guillemets nus et les retours a la ligne. Les expressions \(...) sont
+    /// recopiees telles quelles (leurs guillemets font partie du code).
     /// </summary>
     public static string EscapeRedsRaw(string v)
     {
@@ -130,6 +220,13 @@ internal static class StringSyntax
         for (var k = 0; k < v.Length; k++)
         {
             var c = v[k];
+            if (c == '\\' && k + 1 < v.Length && v[k + 1] == '(' && (k == 0 || v[k - 1] != '\\'))
+            {
+                var end = SkipInterpolation(v, k + 1);
+                sb.Append(v, k, end - k);
+                k = end - 1;
+                continue;
+            }
             var escaped = k > 0 && v[k - 1] == '\\' && (k < 2 || v[k - 2] != '\\');
             if (c == '"' && !escaped) sb.Append("\\\"");
             else if (c == '\n') sb.Append("\\n");

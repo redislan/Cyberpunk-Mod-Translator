@@ -10,8 +10,6 @@ public sealed class XlLocalization
     /// <summary>"onscreens" / "subtitles" -> langue -> chemins, dans l'ordre du fichier.</summary>
     public Dictionary<string, List<(string Lang, List<string> Paths)>> Sections { get; } = new();
 
-    public string? Extend { get; private set; }
-
     public List<(string Lang, List<string> Paths)> Get(string section) =>
         Sections.TryGetValue(section, out var v) ? v : new();
 
@@ -40,7 +38,7 @@ public sealed class XlLocalization
                 var (key, value) = SplitKey(text);
                 if (key == "extend")
                 {
-                    xl.Extend = Unquote(value);
+                    // "extend" ne sert pas a la traduction : ligne lue pour ne pas la prendre pour une section
                     section = null;
                     continue;
                 }
@@ -62,7 +60,7 @@ public sealed class XlLocalization
             {
                 var item = Unquote(text.Length > 1 ? text[2..].Trim() : "");
                 if (lang != null && indent >= langIndent)
-                    xl.Sections[section].Last().Paths.Add(item);
+                    AddPaths(xl, section, lang, new List<string> { item });
                 else
                     AddPaths(xl, section, "en-us", new List<string> { item }); // liste directe = anglais
                 continue;

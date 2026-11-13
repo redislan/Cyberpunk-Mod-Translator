@@ -1,0 +1,65 @@
+/*
+  @name: Badlands
+  @author: Sterben
+  @description: Desert dust, rust and sunset orange.
+  @description.fr: Poussière du désert, rouille et orange de coucher de soleil.
+*/
+
+:root {
+  color-scheme: dark;
+  --bg: #130f0b;
+  --bg-2: #1b1510;
+  --bg-3: #241c15;
+  --line: #3d3024;
+  --text: #f1e6d6;
+  --text-dim: #ad9a83;
+  --accent: #ff8a1f;
+  --accent-2: #e8c48a;
+  --danger: #ff5a4a;
+  --ok: #9ccf5a;
+  --warn: #ffc15e;
+  --todo: #6fc3d8;
+  --check: #ffc15e;
+  --done: #9ccf5a;
+  --code: #857560;
+  --radius: 4px;
+  --radius-lg: 6px;
+  --font: "Bahnschrift", "Segoe UI", system-ui, sans-serif;
+  --on-accent: #1b1510;
+  --logo-text: #1b1510;
+  --on-accent-2: #1b1510;
+  --row-line: #261e16;
+  --row-hover: #1a1510;
+  --row-selected: #2a1f13;
+  --entry-selected: #33261a;
+  --sep-hover: #30261c;
+  --banner-bg: #3a220c;
+  --banner-line: #6a4018;
+  --accent-soft: rgba(255, 138, 31, .07);
+  --done-soft: rgba(156, 207, 90, .10);
+  --warn-soft: rgba(255, 193, 94, .10);
+  --overlay: rgba(10, 6, 2, .68);
+  --shadow: 0 8px 24px rgba(0, 0, 0, .5);
+}
+
+/* Fond : lueur de coucher de soleil derriere l'accueil */
+body { background: linear-gradient(180deg, #1c120a 0%, var(--bg) 45%); }
+::selection { background: var(--accent); color: #1b1510; }
+
+.topbar { background: #18120d; border-bottom: 1px solid #5a3a1c; }
+.logo { background: linear-gradient(135deg, #ffb347, var(--accent) 60%, #d9541e); letter-spacing: 2px; }
+.title { text-transform: uppercase; letter-spacing: 2px; }
+
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn.primary { background: linear-gradient(180deg, #ffa043, var(--accent)); text-transform: uppercase; letter-spacing: 1px; }
+.tab { text-transform: uppercase; letter-spacing: 1px; }
+.progress-bar div { background: linear-gradient(90deg, #d9541e, var(--accent), #ffc15e); }
+
+.side-title, .table-head, .detail h3, .recent h3 { color: var(--accent-2); }
+.welcome-card h1, .ml-card h2 { text-transform: uppercase; letter-spacing: 2px; color: var(--accent); }
+.dialog header { text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent-2); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #3d3024; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }

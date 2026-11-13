@@ -8,7 +8,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>CyberpunkModTranslator.App</RootNamespace>
     <AssemblyName>CyberpunkModTranslator</AssemblyName>
-    <Version>0.7.1</Version>
     <NoWarn>CA1416</NoWarn>
     <!-- Icone du .exe (badge jaune CMT) : assets\icon\make_icon.py la refabrique -->
     <ApplicationIcon>..\..\assets\icon\app.ico</ApplicationIcon>
@@ -26,6 +25,11 @@
   <!-- Fichiers de langue copies dans dist\lang : on peut en ajouter sans recompiler -->
   <ItemGroup>
     <None Include="..\..\lang\*.json;..\..\lang\README.md" Link="lang\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Themes copies dans dist\themes : un theme se pose ou se modifie sans recompiler -->
+  <ItemGroup>
+    <None Include="..\..\themes\**\*" Link="themes\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

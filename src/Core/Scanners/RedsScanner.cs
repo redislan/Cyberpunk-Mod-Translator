@@ -39,6 +39,7 @@ internal sealed class RedsScanner : SourceScanner
                     ? s[i - 1]
                     : '\0';
                 var (value, raw, end) = StringSyntax.ReadReds(s, i);
+                if (prefix == 's') (raw, end) = StringSyntax.ReadRedsInterpolated(s, i);
                 if (prefix is 'n' or 'r' or 't' or 'l')
                 {
                     MarkRead(i, end);
@@ -77,13 +78,17 @@ internal sealed class RedsScanner : SourceScanner
     /// <summary>@runtimeProperty("ModSettings.xxx", "valeur") : la propriete dit si la valeur est affichee.</summary>
     private static readonly Regex ModSettingsProperty = new(@"@runtimeProperty\(\s*""ModSettings\.(?<p>[A-Za-z0-9_.]+)""\s*,$", RegexOptions.Compiled);
 
+    /// <summary>Cle de texte du jeu en plusieurs morceaux separes par des tirets, dont un peut contenir une espace.</summary>
+    private static readonly Regex LocKeyWithSpace = new(@"^[A-Z0-9]\w*(-[A-Z0-9]\w*( [A-Z0-9]\w*)?){3,}$", RegexOptions.Compiled);
+
     private static StringKind ModSettingsKind(string property, string value, StringKind kind)
     {
         var p = property.ToLowerInvariant();
         if (p.EndsWith(".order")) return StringKind.Code;
         var displayed = p is "mod" or "category" or "displayname" or "description" or "title" or "tooltip" || p.StartsWith("displayvalues");
         if (!displayed) return StringKind.Code; // step, min, max, dependency, updatePolicy...
-        // une cle de traduction ("IH.Core.mod.Name", "UI-Settings-KeyBindings") reste une cle
+        // une cle de traduction ("IH.Core.mod.Name", "UI-Settings-KeyBindings", "Gameplay-Items-Item Type-Cyb_Launcher") reste une cle
+        if (LocKeyWithSpace.IsMatch(value)) return StringKind.Code;
         return kind == StringKind.Code || !Regex.IsMatch(value, @"[A-Za-z\u00C0-\u024F]") ? StringKind.Code : StringKind.Text;
     }
 

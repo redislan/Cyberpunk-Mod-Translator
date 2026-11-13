@@ -11,10 +11,29 @@ internal sealed class JsonScanner : SourceScanner
     {
         var s = S;
         string? lastKey = null;
+        // Blocs de textes par langue ({ "en-us": { ... }, "de-de": { ... } }) : ceux des autres langues sont des traductions
+        var languageBlocks = Languages.HasEnglishBlock(s);
+        var blocks = new Stack<bool>();
+        var otherLanguage = 0;
         var i = 0;
         while (i < s.Length)
         {
-            if (s[i] != '"')
+            var c = s[i];
+            if (c is '{' or '[')
+            {
+                var other = languageBlocks && Languages.IsOtherLanguageKey(lastKey);
+                blocks.Push(other);
+                if (other) otherLanguage++;
+                i++;
+                continue;
+            }
+            if (c is '}' or ']')
+            {
+                if (blocks.Count > 0 && blocks.Pop()) otherLanguage--;
+                i++;
+                continue;
+            }
+            if (c != '"')
             {
                 i++;
                 continue;
@@ -26,12 +45,13 @@ internal sealed class JsonScanner : SourceScanner
             if (isKey) lastKey = value;
             else
             {
-                Add(i, end, value, TextClassifier.ApplyKeyHint(TextClassifier.Classify(value), lastKey), StringSyntax.EncodeJson);
+                var kind = otherLanguage > 0
+                    ? StringKind.Code
+                    : TextClassifier.ApplyKeyHint(TextClassifier.Classify(value), lastKey);
+                Add(i, end, value, kind, StringSyntax.EncodeJson);
             }
             i = end;
         }
         return Literals;
     }
-
-
 }

@@ -70,6 +70,7 @@ public static class Program
         if (options.ContainsKey("debug")) Log.DebugEnabled = true;
         Log.Start("cmt");
         Log.Info("Commande : cmt " + string.Join(" ", args));
+        ModPackage.CleanLeftovers();
         try
         {
             using var compressor = Compressors.Load(options.GetValueOrDefault("oodle"), options.GetValueOrDefault("game"));

@@ -9,7 +9,10 @@ public enum LocKind
 /// <summary>Une ligne de texte d'un fichier de localisation.</summary>
 public sealed class LocEntry
 {
-    /// <summary>Cle utilisee pour faire correspondre les lignes : cle numerique, sinon cle texte.</summary>
+    /// <summary>
+    /// Cle utilisee pour faire correspondre les lignes : cle numerique, sinon cle texte. Si le fichier contient
+    /// plusieurs lignes avec la meme cle, les suivantes recoivent un suffixe ("Cle~2", "Cle~3") pour rester distinctes.
+    /// </summary>
     public string Key { get; init; } = "";
     public ulong PrimaryKey { get; init; }
     public string? SecondaryKey { get; init; }
@@ -80,11 +83,17 @@ public sealed class LocalizationFile
             var loc = new LocalizationFile(cr2w, kind);
             if (chunk.Data?.Get("entries")?.Value is RedArray array)
             {
+                var seen = new Dictionary<string, int>(StringComparer.Ordinal);
                 foreach (var item in array.Items.OfType<RedStruct>())
                 {
                     var pk = ReadU64(item, kind == LocKind.Subtitles ? "stringId" : "primaryKey");
                     var sk = (item.Get("secondaryKey")?.Value as RedString)?.Value;
                     var key = pk != 0 ? pk.ToString() : sk ?? "";
+                    if (key.Length > 0)
+                    {
+                        var n = seen[key] = seen.GetValueOrDefault(key) + 1;
+                        if (n > 1) key = $"{key}~{n}";
+                    }
                     var entry = new LocEntry
                     {
                         Key = key,

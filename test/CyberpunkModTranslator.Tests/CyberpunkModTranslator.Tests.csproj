@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Tests du moteur : aucun paquet a telecharger, se lancent avec test.bat (ou : dotnet run dans ce dossier) -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>CyberpunkModTranslator.Tests</RootNamespace>
+    <AssemblyName>cmt-tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Core\CyberpunkModTranslator.Core.csproj" />
+  </ItemGroup>
+
+</Project>

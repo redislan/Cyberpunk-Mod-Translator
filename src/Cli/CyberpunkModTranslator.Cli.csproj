@@ -7,7 +7,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>CyberpunkModTranslator.Cli</RootNamespace>
     <AssemblyName>cmt</AssemblyName>
-    <Version>0.7.1</Version>
     <ApplicationIcon>..\..\assets\icon\app.ico</ApplicationIcon>
   </PropertyGroup>
 

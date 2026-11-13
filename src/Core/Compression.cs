@@ -33,7 +33,7 @@ public sealed class OodleDll : ICompressor
     private delegate long CompressFn(int compressor, byte[] raw, long rawLen, byte[] comp, int level,
         IntPtr options, IntPtr dictionaryBase, IntPtr lrm, IntPtr scratchMem, long scratchSize);
 
-    private readonly IntPtr _lib;
+    private IntPtr _lib;
     private readonly DecompressFn _decompress;
     private readonly CompressFn _compress;
 
@@ -42,13 +42,24 @@ public sealed class OodleDll : ICompressor
     public OodleDll(string dllPath)
     {
         _lib = NativeLibrary.Load(dllPath);
-        _decompress = Marshal.GetDelegateForFunctionPointer<DecompressFn>(NativeLibrary.GetExport(_lib, "OodleLZ_Decompress"));
-        _compress = Marshal.GetDelegateForFunctionPointer<CompressFn>(NativeLibrary.GetExport(_lib, "OodleLZ_Compress"));
+        try
+        {
+            _decompress = Marshal.GetDelegateForFunctionPointer<DecompressFn>(NativeLibrary.GetExport(_lib, "OodleLZ_Decompress"));
+            _compress = Marshal.GetDelegateForFunctionPointer<CompressFn>(NativeLibrary.GetExport(_lib, "OodleLZ_Compress"));
+        }
+        catch
+        {
+            // Pas la bonne DLL : on la relache avant de signaler l'erreur
+            NativeLibrary.Free(_lib);
+            _lib = IntPtr.Zero;
+            throw;
+        }
         Name = $"Oodle ({dllPath})";
     }
 
     public byte[] Decompress(byte[] source, int rawSize)
     {
+        ObjectDisposedException.ThrowIf(_lib == IntPtr.Zero, this);
         Compressors.CheckSize(rawSize);
         var output = new byte[rawSize];
         var r = _decompress(source, source.Length, output, rawSize, 1, 0, 0,
@@ -60,6 +71,7 @@ public sealed class OodleDll : ICompressor
 
     public byte[]? Compress(byte[] raw)
     {
+        ObjectDisposedException.ThrowIf(_lib == IntPtr.Zero, this);
         var bound = raw.Length + 274 * (raw.Length / 0x40000 + 2) + 4096;
         var output = new byte[bound];
         var r = _compress(CompressorKraken, raw, raw.Length, output, LevelNormal,
@@ -67,7 +79,12 @@ public sealed class OodleDll : ICompressor
         return r <= 0 ? null : output[..(int)r];
     }
 
-    public void Dispose() => NativeLibrary.Free(_lib);
+    /// <summary>Relache la DLL (une seule fois, meme si Dispose est appele deux fois).</summary>
+    public void Dispose()
+    {
+        var lib = Interlocked.Exchange(ref _lib, IntPtr.Zero);
+        if (lib != IntPtr.Zero) NativeLibrary.Free(lib);
+    }
 }
 
 /// <summary>
@@ -81,7 +98,7 @@ public sealed class KrakenLib : ICompressor
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int CompressFn(byte[] src, nuint srcLen, byte[] dst, int level);
 
-    private readonly IntPtr _lib;
+    private IntPtr _lib;
     private readonly DecompressFn _decompress;
     private readonly CompressFn _compress;
 
@@ -90,8 +107,17 @@ public sealed class KrakenLib : ICompressor
     public KrakenLib(string path)
     {
         _lib = NativeLibrary.Load(path);
-        _decompress = Marshal.GetDelegateForFunctionPointer<DecompressFn>(NativeLibrary.GetExport(_lib, "Kraken_Decompress"));
-        _compress = Marshal.GetDelegateForFunctionPointer<CompressFn>(NativeLibrary.GetExport(_lib, "Kraken_Compress"));
+        try
+        {
+            _decompress = Marshal.GetDelegateForFunctionPointer<DecompressFn>(NativeLibrary.GetExport(_lib, "Kraken_Decompress"));
+            _compress = Marshal.GetDelegateForFunctionPointer<CompressFn>(NativeLibrary.GetExport(_lib, "Kraken_Compress"));
+        }
+        catch
+        {
+            NativeLibrary.Free(_lib);
+            _lib = IntPtr.Zero;
+            throw;
+        }
         Name = $"Kraken ({path})";
     }
 
@@ -112,7 +138,12 @@ public sealed class KrakenLib : ICompressor
         return r <= 0 ? null : output[..r];
     }
 
-    public void Dispose() => NativeLibrary.Free(_lib);
+    /// <summary>Relache la DLL (une seule fois, meme si Dispose est appele deux fois).</summary>
+    public void Dispose()
+    {
+        var lib = Interlocked.Exchange(ref _lib, IntPtr.Zero);
+        if (lib != IntPtr.Zero) NativeLibrary.Free(lib);
+    }
 }
 
 public static class Compressors

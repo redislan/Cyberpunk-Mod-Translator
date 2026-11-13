@@ -25,10 +25,10 @@ internal sealed class YamlScanner : SourceScanner
     {
         var s = S;
         var offset = 0;
-        var lineNo = 0;
-        foreach (var rawLine in s.Split('\n'))
+        var lines = s.Split('\n');
+        for (var lineNo = 0; lineNo < lines.Length; lineNo++)
         {
-            lineNo++;
+            var rawLine = lines[lineNo];
             var lineStart = offset;
             offset += rawLine.Length + 1;
             var line = rawLine.TrimEnd('\r');
@@ -37,9 +37,13 @@ internal sealed class YamlScanner : SourceScanner
 
             string? key = null;
             Group? valueGroup = null;
+            // Colonne a partir de laquelle une ligne suivante plus decalee est la suite de la valeur :
+            // celle de la cle ("- nom: valeur" : les cles voisines sont alignees sur "nom"), sinon celle du tiret.
+            var ownColumn = Indent(line);
             var kv = KeyValue.Match(line);
             if (kv.Success)
             {
+                ownColumn = kv.Groups["key"].Index;
                 key = kv.Groups["key"].Value.Trim().Trim('\'', '"');
                 if (kv.Groups["value"].Success) valueGroup = kv.Groups["value"];
             }
@@ -76,6 +80,9 @@ internal sealed class YamlScanner : SourceScanner
                 var plain = (hash >= 0 ? vText[..hash] : vText).TrimEnd();
                 value = plain;
                 length = plain.Length;
+                // Valeur sans guillemets qui continue sur la ligne suivante (ligne plus decalee) : la remplacer par
+                // une chaine entre guillemets laisserait la suite orpheline et casserait le fichier. On n'y touche pas.
+                if (ContinuesBelow(lines, lineNo, ownColumn)) continue;
                 if (value.ToLowerInvariant() is "true" or "false" or "null" or "~" or "yes" or "no" or "on" or "off") continue;
             }
 
@@ -93,5 +100,26 @@ internal sealed class YamlScanner : SourceScanner
             Add(lineStart + vStart, lineStart + vStart + length, value, kind, StringSyntax.EncodeYaml);
         }
         return Literals;
+    }
+
+    private static int Indent(string line)
+    {
+        var n = 0;
+        while (n < line.Length && (line[n] == ' ' || line[n] == '\t')) n++;
+        return n;
+    }
+
+    /// <summary>La prochaine ligne non vide (hors commentaires) est plus decalee que la colonne donnee.</summary>
+    private static bool ContinuesBelow(string[] lines, int index, int indent)
+    {
+        for (var k = index + 1; k < lines.Length; k++)
+        {
+            var next = lines[k].TrimEnd('\r');
+            var trimmed = next.TrimStart();
+            if (trimmed.Length == 0) continue;
+            if (trimmed.StartsWith('#')) continue;
+            return Indent(next) > indent;
+        }
+        return false;
     }
 }

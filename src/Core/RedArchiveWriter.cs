@@ -7,6 +7,10 @@ namespace CyberpunkModTranslator.Core;
 /// Ecrit une archive .archive avec la meme disposition que WolvenKit :
 /// en-tete, liste des chemins (LXRS), fichiers tries par hash, index aligne sur 4096 octets.
 /// Ne gere que des fichiers sans buffers externes (c'est le cas des fichiers de texte).
+/// <para>
+/// Un fichier dont le chemin est inconnu est donne par son hash en chiffres : ce nombre est alors utilise tel quel
+/// (il n'est pas re-hache) et il n'entre pas dans la liste des chemins, comme le fait WolvenKit.
+/// </para>
 /// </summary>
 public static class RedArchiveWriter
 {
@@ -15,7 +19,7 @@ public static class RedArchiveWriter
     public static void Write(string outputPath, IReadOnlyList<(string Path, byte[] Data)> files, ICompressor? compressor)
     {
         var entries = files
-            .Select(f => (Hash: ResourcePath.Hash(f.Path), f.Path, f.Data))
+            .Select(f => (Hash: ResourcePath.Resolve(f.Path), f.Path, f.Data))
             .OrderBy(f => f.Hash)
             .ToList();
         if (entries.Select(e => e.Hash).Distinct().Count() != entries.Count)
@@ -27,22 +31,27 @@ public static class RedArchiveWriter
         // En-tete provisoire (40 octets) + longueur des donnees perso + bourrage jusqu'a 0xAC
         bw.Write(new byte[RedArchive.ExtendedHeaderSize]);
 
-        // Liste des chemins (LXRS)
-        var blob = new MemoryStream();
-        foreach (var e in entries)
+        // Liste des chemins (LXRS) : seulement les fichiers dont le chemin est connu
+        var named = entries.Where(e => ResourcePath.AsNumber(e.Path) == null).ToList();
+        var customLength = 0u;
+        if (named.Count > 0)
         {
-            blob.Write(Encoding.Latin1.GetBytes(e.Path));
-            blob.WriteByte(0);
+            var blob = new MemoryStream();
+            foreach (var e in named)
+            {
+                blob.Write(Encoding.Latin1.GetBytes(e.Path));
+                blob.WriteByte(0);
+            }
+            var names = blob.ToArray();
+            var packedNames = TryCompress(names, compressor, minimumSize: 0);
+            bw.Write(RedArchive.LxrsMagic);
+            bw.Write(1u);
+            bw.Write(names.Length);
+            bw.Write(packedNames.Length);
+            bw.Write(named.Count);
+            bw.Write(packedNames);
+            customLength = (uint)(ms.Position - RedArchive.ExtendedHeaderSize);
         }
-        var names = blob.ToArray();
-        var packedNames = TryCompress(names, compressor, minimumSize: 0);
-        bw.Write(RedArchive.LxrsMagic);
-        bw.Write(1u);
-        bw.Write(names.Length);
-        bw.Write(packedNames.Length);
-        bw.Write(entries.Count);
-        bw.Write(packedNames);
-        var customLength = (uint)(ms.Position - RedArchive.ExtendedHeaderSize);
 
         // Donnees des fichiers
         var segments = new List<ArchiveSegment>();

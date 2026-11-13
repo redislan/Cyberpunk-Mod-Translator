@@ -1,4 +1,4 @@
-# Cyberpunk Mod Translator — v0.7.1
+# Cyberpunk Mod Translator — v0.8.1
 
 *[Version française](README.fr.md)*
 
@@ -9,8 +9,38 @@ Translate Cyberpunk 2077 mods into your language without WolvenKit. Open a mod, 
 - Never edits the original mod: the translation is a separate mod you install below it in MO2.
 - **Modlist** tab: your MO2 list with its separators, and for each mod whether it is translated, still to translate, or has nothing to translate.
 - Interface in English and French, and anyone can add a language (see [Interface languages](#interface-languages)).
+- Themes: five looks included (Neon, Corpo, Netrunner, Badlands, Daylight), and anyone can make one with a single `.css` file (see [Themes](#themes)).
 
 Made by Sterben. MIT license.
+
+## New in v0.8.1
+
+A fix release, after a full review of the code.
+
+**Your files are safer**
+- Building a translation never deletes a folder blindly any more. The translation is built in a work folder, then put in place. A folder or zip with the same name is only replaced if this tool made it (it carries a small `cmt-translation.txt` file); anything else is renamed `… .old-date` and reported. Output names like `.` or `..`, or the original mod itself, are refused.
+- When a mod is updated, your saved translations are found again by their English text, even when the author added lines above them. Lines that really can't be matched are reported, and the previous save is kept as a `.bak` copy.
+
+**Mods that used to fail**
+- Mods that replace a game file without a path list: the patch now keeps the file's real hash (before, it was built but had no effect in game).
+- Mods with options that hold the same archive name twice, and text files with the same key twice.
+- A damaged or empty archive no longer blocks the rest of the mod.
+- A zip with a wrapping folder (`MyMod v1.2/archive/…`) now gives a translation that starts at the game folders.
+- `.xl` files that aren't named after their archive are read.
+- Only the useful files of a zip are unpacked (archives, `.xl`, text files), and leftovers of a crashed session are cleaned at startup.
+
+**Better sorting of text and code**
+- Existing translations are no longer offered for translation: language files (`Localization/tr_TR.lua`, `mymod.es-es.json`, a `ru-ru/` folder) and language blocks inside one file (`["de-de"] = { … }`).
+- SQL queries, templates made only of variables (`{label} {price}`), column lists, hex ids, relative paths and the mod's own log functions (`E("…")`, `LHUDLogDebug("…")`) are sorted as code.
+- A string inside a redscript `\(…)` expression no longer cuts the interpolated string in two.
+
+**Other fixes**
+- Changing the game folder with a mod open could crash the next build.
+- The tool could close by itself after the PC woke from sleep.
+- Big JSON files were very slow to analyse (60,000 values: from 67 s to under 1 s).
+- Long numeric keys are written `k:123…` in the TSV so Excel doesn't turn them into `1.23E+16`.
+- A theme can't load anything from the Internet, and **Ctrl+Alt+T** brings back the default theme if a theme makes the tool unusable.
+- `test.bat` runs the engine's tests (see [What is tested](#what-is-tested)).
 
 ## Requirements
 
@@ -22,7 +52,7 @@ Made by Sterben. MIT license.
 ## Install
 
 1. Download the latest release zip.
-2. Extract it anywhere. Keep all the files together: the `.exe` needs the `.dll` files and the `lang` folder next to it.
+2. Extract it anywhere. Keep all the files together: the `.exe` needs the `.dll` files and the `lang` and `themes` folders next to it.
 3. Start `CyberpunkModTranslator.exe`.
 
 ## Translate a mod
@@ -41,8 +71,8 @@ The rest of the interface:
 - **Shortcuts**: `Ctrl+Enter` or `Alt+↓` for the next line, `Alt+↑` for the previous one, `Ctrl+S` to save, `Ctrl+F` to search.
 - **Reuse a translation**: picks up the texts of an existing translation (folder or zip), for example to update a translation after a new version of the mod.
 - **TSV**: export and import to work in Excel.
-- **Settings**: interface language, game folder (for the compression DLL), MO2 "mods" folder (also read by the Modlist tab), output folder, target language.
-- **Data**: settings and saves are in `%AppData%\CyberpunkModTranslator` (`reglages.json`, `projets\*.tsv`, `modlist-cache.json`), with one log per session in `logs\` (the last 10 are kept). Interface languages are next to the exe, in `lang\`.
+- **Settings**: interface language, theme, game folder (for the compression DLL), MO2 "mods" folder (also read by the Modlist tab), output folder, target language.
+- **Data**: settings and saves are in `%AppData%\CyberpunkModTranslator` (`reglages.json`, `projets\*.tsv`, `modlist-cache.json`), with one log per session in `logs\` (the last 10 are kept). Interface languages and themes are next to the exe, in `lang\` and `themes\`.
 
 ## The Modlist tab
 
@@ -83,12 +113,25 @@ The interface comes in English and French. In **Settings → Interface language*
 
 Want to share your language? Send it as a pull request, or post it on the Nexus Mods page of the tool.
 
+## Themes
+
+In **Settings → Theme**, pick how the tool looks. "Default (built-in)" is the original look; the theme shows as soon as you pick it, and Cancel brings back the previous one.
+
+- Five themes come with the tool, in `themes\` next to the exe: **Neon** (Night City yellow and cyan, cut corners), **Corpo** (black and red), **Netrunner** (magenta and cyan on violet), **Badlands** (desert orange) and **Daylight** (light theme).
+- A theme is one `.css` file loaded after the tool's own styles. It only changes the look: the tool works exactly the same with any theme.
+- **Make a theme**: copy a theme, rename it, change the colors at the top (`--bg`, `--accent`…). No need to recompile: the folder is read again every time Settings opens, the "Themes folder" button takes you there, and F5 shows your changes. A theme can also use any CSS rule, images and fonts kept in the folder. Full instructions: [themes/README.md](themes/README.md).
+
+Want to share your theme? Send it as a pull request, or post it on the Nexus Mods page of the tool.
+
 ## Build from source
 
 1. Install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
 2. Run `build.bat`. It makes `dist\CyberpunkModTranslator.exe`, and `dist\cmt.exe` for the command line.
+3. Optional: run `test.bat` before a release. It runs the engine's tests on fake mods; it needs neither the game nor its DLL.
 
-The interface is HTML, served by a small local server that only your PC can reach (127.0.0.1), with a random token at each start. The look is easy to change (CSS variables in `src/App/wwwroot/app.css`).
+The version number is set in one place: `Directory.Build.props`.
+
+The interface is HTML, served by a small local server that only your PC can reach (127.0.0.1), with a random token at each start. The look is easy to change: every color is a CSS variable in `src/App/wwwroot/app.css`, and a theme from `themes\` redefines them.
 
 # The engine
 
@@ -199,13 +242,15 @@ If only the first one is translated, `Equals(category, "Background")` no longer 
 - **v0.6, on a real modlist of 52 mods** (about 23,000 strings): every change in the sorting was compared before/after; only the expected strings moved (debug messages, settings keys, file protocol, YAML comments). The 38 translations built from them came out byte for byte identical before and after the rewrite of the plain-file readers.
 - **Damaged archives**: sizes and positions read from an archive are checked before use (index, file count, segments, unpacked size up to 1 GB). A damaged or booby-trapped archive gives a clear error instead of crashing the tool.
 - **v0.7, Modlist tab**: MO2's files were read on a real instance (portable MO2 installed in a folder next to its mods, 3 profiles, 94 entries, separators with and without a colour, `modlist.txt` with Windows line breaks). The whole tab was then tested on a copy of that list: statuses, kept results, profile change, missing game DLL, damaged archive.
+- **v0.8, themes**: the five themes were checked on screenshots of the translation table and of Settings. Preview, Cancel, Escape, Save and reload were tested in the browser, along with theme files whose names contain spaces or accents, images in a subfolder, and a saved theme deleted from the folder (the default theme comes back, with a line in the log). Paths that try to leave the `themes` folder are refused.
+- **v0.8.1, automatic tests** (`test.bat`): 28 tests build fake mods and check the result: full cycle, output-folder safety (nothing deleted that the tool didn't make), mod updates, duplicate names and keys, damaged archives, files without a path, zips with a wrapping folder, encodings, tricky strings, text/code sorting.
+- **v0.8.1, on 9 open-source mods from GitHub** (AMM, CyberScript, Equipment-EX, Let There Be Flight, djkovrik's mods…, about 500,000 strings): every string whose sorting changed was compared before/after, and all 331 plain files were rebuilt with a translation full of quotes and accents on every line, then read back.
 - **On every build**, the program reads back everything it just wrote (archive, texts, plain files) and stops if anything doesn't match.
 - **Tags**: `{int_0}`, `<Rich ...>`, `%d`, `\(...)` and line breaks are compared between the English and the translation, with a warning if they differ.
 
 ## Not handled yet
 
 - Texts stored outside localization files (`.inkwidget` interfaces, etc.).
-- A Cyberpunk-style skin for the interface.
 
 ## Code layout
 
@@ -221,19 +266,22 @@ If only the first one is translated, `Equals(category, "Background")` no longer 
 | `Core/ArchiveXl.cs` | Tolerant reading of the `localization` block of `.xl` files |
 | `Core/PlainText.cs` | A plain file and its strings, rewriting |
 | `Core/TextClassifier.cs` | Text / code sorting of the strings |
-| `Core/Scanners/` | One reader per language (`LuaScanner`, `RedsScanner`, `YamlScanner`, `JsonScanner`) on a common base (`SourceScanner`); `StringSyntax` holds the quotes and escapes of each language, `CodeContext` finds the function call around a string, `FileRules` the whole-file rules |
+| `Core/Scanners/` | (`Languages` spots texts already given in another language, `LogWrappers` finds the mod's own log functions.) One reader per language (`LuaScanner`, `RedsScanner`, `YamlScanner`, `JsonScanner`) on a common base (`SourceScanner`); `StringSyntax` holds the quotes and escapes of each language, `CodeContext` finds the function call around a string, `FileRules` the whole-file rules |
 | `Core/ModPackage.cs` | Opening a mod (folder or zip) |
 | `Core/Mo2.cs` | Reading MO2: instance, profiles, `modlist.txt` in MO2's order, separator colours (`meta.ini`) |
 | `Core/TranslationProject.cs` | Analysis, TSV, reusing a translation, building the patch |
 | `Core/Tsv.cs` | TSV files (including ones saved again by Excel) |
 | `Core/UiText.cs` | Interface languages: reading `lang\*.json`, English fallback |
 | `Core/Log.cs` | Session log (one file per launch, also sent to the Visual Studio Output window) |
+| `test/CyberpunkModTranslator.Tests/` | The engine's tests (`test.bat`) |
 | `lang/` | Language files (`en.json`, `fr.json`) and instructions for translators |
+| `themes/` | Included themes and instructions for theme makers |
 | `Cli/Program.cs` | The `cmt` command line |
 | `App/Program.cs` | The app's local server, opening the window |
 | `App/AppState.cs` | Settings, open project, auto-save, built-in browser |
 | `App/ModlistService.cs` | Modlist tab: status of each mod, background analysis, kept results |
 | `App/NativeDialog.cs` | The Windows "Open" window (direct shell call, no dependency) |
+| `App/Themes.cs` | Themes: list of `themes\*.css`, header (`@name`, `@author`, `@description`), serving the theme and its images |
 | `App/wwwroot/` | Interface (HTML, CSS, JavaScript), built into the exe |
 | `assets/icon/` | The app icon (`app.ico`, the yellow CMT badge) and `make_icon.py`, the script that draws it |
 

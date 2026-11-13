@@ -18,8 +18,12 @@ internal sealed class LuaScanner : SourceScanner
         public bool IsEmpty => Literal < 0 && !Scalar && !Other;
     }
 
+    /// <summary>Nombre de tables ouvertes qui sont un bloc de textes d'une autre langue (["de-de"] = { ... }).</summary>
+    private int OtherLanguageDepth;
+
     private sealed class TableFrame
     {
+        public bool OtherLanguage;
         public int Paren;
         public readonly List<TableItem> Items = new();
         public TableItem Cur = new();
@@ -38,6 +42,7 @@ internal sealed class LuaScanner : SourceScanner
         var frames = new Stack<TableFrame>();
         var identifiers = new HashSet<string>(StringComparer.Ordinal);
         var labels = new HashSet<int>();
+        var languageBlocks = Languages.HasEnglishBlock(s);
 
         void Other()
         {
@@ -109,7 +114,15 @@ internal sealed class LuaScanner : SourceScanner
             if (c == '{')
             {
                 Other(); // la table imbriquee compte comme "autre chose" pour la table parente
-                frames.Push(new TableFrame());
+                var frame = new TableFrame();
+                if (languageBlocks)
+                {
+                    var lineStart = s.LastIndexOf('\n', Math.Max(0, i - 1)) + 1;
+                    var key = KeyBefore.Match(s[lineStart..i]);
+                    frame.OtherLanguage = key.Success && Languages.IsOtherLanguageKey(key.Groups["k"].Value);
+                    if (frame.OtherLanguage) OtherLanguageDepth++;
+                }
+                frames.Push(frame);
                 i++;
                 continue;
             }
@@ -118,6 +131,7 @@ internal sealed class LuaScanner : SourceScanner
                 if (frames.Count > 0)
                 {
                     var f = frames.Pop();
+                    if (f.OtherLanguage) OtherLanguageDepth--;
                     f.EndItem();
                     ClassifyTable(f, list, identifiers, labels);
                 }
@@ -260,6 +274,7 @@ internal sealed class LuaScanner : SourceScanner
             }
         }
 
+        if (OtherLanguageDepth > 0) kind = StringKind.Code; // bloc ["de-de"] = { ... } : traduction existante
         Add(start, end, value, kind, v => quote + StringSyntax.EscapeCStyle(v, quote) + quote, comparison);
     }
 

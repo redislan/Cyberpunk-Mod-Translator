@@ -70,7 +70,8 @@ public sealed class PlainTextFile
         var ext = Path.GetExtension(relativePath).ToLowerInvariant();
         if (!SupportedExtensions.Contains(ext)) return false;
         var norm = relativePath.Replace('\\', '/').ToLowerInvariant();
-        if (norm.EndsWith(".xl")) return false;
+        // Dossiers d'outils de developpement (.vscode, .github, .git) : jamais des fichiers du mod
+        if (norm.StartsWith('.') || norm.Contains("/.")) return false;
         if (ext == ".json" && (norm.StartsWith("archive/") || norm.Contains("/archive/"))) return false;
         return true;
     }
@@ -116,7 +117,13 @@ public sealed class PlainTextFile
     }
 
     /// <summary>Remplace les chaines indiquees (index -> nouveau texte). Le reste du fichier ne bouge pas d'un octet.</summary>
-    public byte[] Apply(IReadOnlyDictionary<int, string> replacements)
+    public byte[] Apply(IReadOnlyDictionary<int, string> replacements) => Apply(replacements, out _);
+
+    /// <param name="switchedToUtf8">
+    /// Le fichier n'etait pas en UTF-8 et une traduction contient un caractere que son encodage ne sait pas ecrire
+    /// (« œ », « ’ », « … ») : le fichier entier est alors ecrit en UTF-8 plutot que de remplacer ce caractere par « ? ».
+    /// </param>
+    public byte[] Apply(IReadOnlyDictionary<int, string> replacements, out bool switchedToUtf8)
     {
         var sb = new StringBuilder(Content.Length + 256);
         var pos = 0;
@@ -128,7 +135,15 @@ public sealed class PlainTextFile
             pos = lit.Start + lit.Length;
         }
         sb.Append(Content, pos, Content.Length - pos);
-        var body = Encoding.GetBytes(sb.ToString());
+        var text = sb.ToString();
+        var encoding = Encoding;
+        switchedToUtf8 = false;
+        if (encoding is not UTF8Encoding && text.Any(c => c > 0xFF))
+        {
+            encoding = new UTF8Encoding(false);
+            switchedToUtf8 = true;
+        }
+        var body = encoding.GetBytes(text);
         return HasBom ? Encoding.UTF8.GetPreamble().Concat(body).ToArray() : body;
     }
 }

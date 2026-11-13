@@ -10,6 +10,20 @@ public static class Tsv
     public static string Escape(string? s) =>
         (s ?? "").Replace("\r\n", "\n").Replace("\t", "\\t").Replace("\r", "\\r").Replace("\n", "\\n");
 
+    private const string NumberPrefix = "k:";
+
+    /// <summary>
+    /// Un nombre de 12 chiffres ou plus (cle numerique, hash d'un fichier sans nom) est ecrit "k:123..." :
+    /// Excel le transformerait sinon en 1,23E+16 et la ligne ne serait plus reconnue a l'import.
+    /// </summary>
+    public static string ProtectNumber(string s) => s.Length >= 12 && s.All(char.IsAsciiDigit) ? NumberPrefix + s : s;
+
+    /// <summary>Inverse de <see cref="ProtectNumber"/> (une valeur sans prefixe est rendue telle quelle).</summary>
+    public static string UnprotectNumber(string s) =>
+        s.Length > NumberPrefix.Length && s.StartsWith(NumberPrefix, StringComparison.Ordinal) && s.AsSpan(NumberPrefix.Length).IndexOfAnyExceptInRange('0', '9') < 0
+            ? s[NumberPrefix.Length..]
+            : s;
+
     public static string Unescape(string s) =>
         s.Replace("\\n", "\n").Replace("\\t", "\t").Replace("\\r", "\r");
 

@@ -9,7 +9,8 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 // -------------------------------------------------------------------------------------------------
 // Cyberpunk Mod Translator : petit serveur local (127.0.0.1 uniquement) + interface affichee
 // dans une fenetre d'application Edge. Fermer la fenetre arrete le programme.
-// Options (pour les tests) : --port N  --sans-fenetre  --oodle <dll>  --jeu <dossier du jeu>  --debug (journal detaille)
+// Options (pour les tests) : --port N  --no-window  --oodle <dll>  --game <dossier du jeu>  --debug (journal detaille)
+// (--sans-fenetre et --jeu, les noms des versions precedentes, marchent toujours)
 // -------------------------------------------------------------------------------------------------
 
 var port = 0;
@@ -19,10 +20,13 @@ for (var i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
-        case "--port" when i + 1 < args.Length: port = int.Parse(args[++i]); break;
-        case "--sans-fenetre": noWindow = true; break;
+        // un numero de port illisible est ignore (port libre choisi par Windows) au lieu de planter avant le journal
+        case "--port" when i + 1 < args.Length:
+            if (!int.TryParse(args[++i], out port) || port is < 0 or > 65535) port = 0;
+            break;
+        case "--no-window" or "--sans-fenetre": noWindow = true; break;
         case "--oodle" when i + 1 < args.Length: oodle = args[++i]; break;
-        case "--jeu" when i + 1 < args.Length: gameDir = args[++i]; break;
+        case "--game" or "--jeu" when i + 1 < args.Length: gameDir = args[++i]; break;
         case "--debug": Log.DebugEnabled = true; break;
     }
 }
@@ -39,6 +43,9 @@ TaskScheduler.UnobservedTaskException += (_, e) =>
     Log.Error("Erreur dans une tache en arriere-plan", e.Exception);
     e.SetObserved();
 };
+
+// Dossiers temporaires laisses par un lancement qui s'est mal termine
+ModPackage.CleanLeftovers();
 
 var state = new AppState(oodle, gameDir);
 var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
@@ -67,6 +74,11 @@ app.Use(async (ctx, next) =>
         }
     }
     ctx.Response.Headers.CacheControl = "no-store";
+    // La page et ses themes ne chargent rien d'ailleurs que de ce programme : un theme telecharge ne peut pas
+    // aller chercher des images ou des polices sur Internet (ni y envoyer quoi que ce soit).
+    ctx.Response.Headers.ContentSecurityPolicy =
+        "default-src 'self'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
+        "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
     try
     {
         await next();
@@ -87,6 +99,26 @@ app.Use(async (ctx, next) =>
 app.MapGet("/", () => Asset("index.html"));
 app.MapGet("/assets/{name}", (string name) => Asset(name));
 app.MapGet("/favicon.ico", () => Asset("favicon.ico"));
+
+// Theme (themes\<nom>.css a cote de l'exe), charge par la page apres app.css.
+// Sans ?id : le theme des reglages. Avec ?id : apercu depuis les Parametres (?id= vide = theme d'origine).
+// On redirige vers le vrai fichier pour que ses chemins relatifs (images, polices) marchent.
+app.MapGet("/theme.css", (HttpRequest req) =>
+{
+    var id = req.Query.ContainsKey("id") ? req.Query["id"].ToString() : state.Settings.Theme;
+    var file = Themes.Find(id);
+    if (file == null)
+    {
+        if (!string.IsNullOrWhiteSpace(id)) Log.WarnOnce($"Theme introuvable : {id} (theme d'origine utilise)");
+        return Results.Text("/* theme d'origine */", "text/css; charset=utf-8");
+    }
+    return Results.Redirect("/themes/" + Uri.EscapeDataString(Path.GetFileName(file)));
+});
+app.MapGet("/themes/{**path}", (string path) =>
+{
+    var file = Themes.Resolve(path, out var type);
+    return file == null ? Results.NotFound() : Results.File(file, type);
+});
 
 var api = app.MapGroup("/api");
 api.MapGet("/state", () => state.GetState());
@@ -126,6 +158,19 @@ api.MapPost("/reveal-lang", () =>
 {
     Directory.CreateDirectory(UiText.Folder);
     state.Reveal(UiText.Folder);
+    return Results.Ok();
+});
+// Themes : relus a chaque ouverture des Parametres (un fichier ajoute apparait sans relancer)
+api.MapGet("/themes", () => new
+{
+    setting = state.Settings.Theme,
+    themes = Themes.Available(UiText.Current),
+    folder = Themes.Folder,
+});
+api.MapPost("/reveal-themes", () =>
+{
+    Directory.CreateDirectory(Themes.Folder);
+    state.Reveal(Themes.Folder);
     return Results.Ok();
 });
 // Journal : ouvre le dossier en selectionnant le journal de la session en cours
@@ -168,6 +213,7 @@ if (!noWindow)
 {
     var window = WindowLauncher.Open(url);
     var started = DateTime.UtcNow;
+    var lastCheck = DateTime.UtcNow;
 
     // Arret : fenetre fermee, page quittee sans revenir, ou plus de nouvelles de la page depuis longtemps
     _ = Task.Run(async () =>
@@ -175,6 +221,15 @@ if (!noWindow)
         while (true)
         {
             await Task.Delay(2000);
+            // Sortie de veille (ou PC fige un moment) : l'horloge a saute, la page n'a pas encore pu redonner de
+            // nouvelles. On lui laisse le temps de le faire au lieu de conclure qu'elle est partie.
+            var now = DateTime.UtcNow;
+            if (now - lastCheck > TimeSpan.FromSeconds(20))
+            {
+                Log.Info($"Reprise apres {(now - lastCheck).TotalSeconds:0} s sans activite (veille ?) : delai de la page remis a zero");
+                state.Resumed();
+            }
+            lastCheck = now;
             // Si le navigateur a rendu la main tout de suite (fenetre confiee a une instance deja ouverte),
             // on ne peut pas suivre le processus : on se fie alors aux signaux de la page.
             if (window != null && window.HasExited && window.ExitTime.ToUniversalTime() - started < TimeSpan.FromSeconds(5))

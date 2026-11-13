@@ -1,0 +1,72 @@
+/*
+  @name: Corpo
+  @author: Sterben
+  @description: Black and blood red, sharp and corporate.
+  @description.fr: Noir et rouge sang, net et corporate.
+*/
+
+:root {
+  color-scheme: dark;
+  --bg: #0a0707;
+  --bg-2: #110b0b;
+  --bg-3: #1a1111;
+  --line: #3a1d1f;
+  --text: #f3eaea;
+  --text-dim: #a8918f;
+  --accent: #e3192e;
+  --accent-2: #d8dbe0;
+  --danger: #ff4a5c;
+  --ok: #49d38a;
+  --warn: #ffb347;
+  --todo: #8ab4ff;
+  --check: #ffb347;
+  --done: #49d38a;
+  --code: #7e6b6b;
+  --radius: 2px;
+  --radius-lg: 2px;
+  --on-accent: #ffffff;
+  --logo-text: #ffffff;
+  --on-accent-2: #110b0b;
+  --row-line: #1d1212;
+  --row-hover: #150e0e;
+  --row-selected: #221012;
+  --entry-selected: #2a1416;
+  --sep-hover: #261517;
+  --banner-bg: #2b0c10;
+  --banner-line: #5a1820;
+  --accent-soft: rgba(227, 25, 46, .07);
+  --done-soft: rgba(73, 211, 138, .10);
+  --warn-soft: rgba(255, 179, 71, .10);
+  --overlay: rgba(5, 0, 0, .7);
+  --shadow: 0 8px 24px rgba(0, 0, 0, .55);
+}
+
+::selection { background: var(--accent); color: #fff; }
+
+.topbar { background: #070505; border-bottom: 2px solid var(--accent); }
+.logo { letter-spacing: 4px; padding: 6px 12px; }
+.title { text-transform: uppercase; letter-spacing: 3px; font-weight: 600; }
+.subtitle { letter-spacing: .4px; }
+
+.btn { letter-spacing: .4px; }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn.primary { text-transform: uppercase; letter-spacing: 1.5px; }
+.btn.primary:hover:not(:disabled) { filter: none; background: #ff2a40; border-color: #ff2a40; }
+.tabs { background: #070505; }
+.tab { text-transform: uppercase; letter-spacing: 1.5px; font-size: 12px; }
+.tab.on { background: var(--accent); color: #fff; box-shadow: none; }
+
+.chip, .status, .ml-tag, .entry .tag { border-radius: 2px; }
+.side-title, .table-head, .detail h3, .recent h3, .detail .label { letter-spacing: 2px; }
+
+.welcome-card, .ml-card { border-top: 3px solid var(--accent); }
+.welcome-card h1, .ml-card h2 { text-transform: uppercase; letter-spacing: 3px; font-weight: 600; }
+.dialog { border-top: 3px solid var(--accent); }
+.dialog header { text-transform: uppercase; letter-spacing: 2px; font-size: 14px; }
+
+input:focus, textarea:focus, select:focus { border-color: var(--accent) !important; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #2a1517; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }

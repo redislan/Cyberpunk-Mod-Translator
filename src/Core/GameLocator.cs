@@ -7,7 +7,6 @@ namespace CyberpunkModTranslator.Core;
 /// <summary>Cherche le dossier d'installation de Cyberpunk 2077 (Steam, GOG, Epic).</summary>
 public static class GameLocator
 {
-    private const string SteamAppId = "1091500";
     private const string GogGameId = "1423049311";
     private const string ExeRelative = @"bin\x64\Cyberpunk2077.exe";
 
@@ -75,7 +74,8 @@ public static class GameLocator
         // Epic : manifestes JSON du launcher
         try
         {
-            var manifests = @"C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests";
+            var manifests = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "Epic", "EpicGamesLauncher", "Data", "Manifests");
             if (Directory.Exists(manifests))
             {
                 foreach (var item in Directory.EnumerateFiles(manifests, "*.item"))
@@ -131,7 +131,6 @@ public static class GameLocator
             Log.Warn("Lecture des cles de desinstallation impossible", ex);
         }
 
-        _ = SteamAppId;
         Log.Debug(found.Count == 0 ? "Dossier du jeu : aucun trouve automatiquement" : "Dossier du jeu trouve : " + string.Join(" ; ", found));
         return found;
     }

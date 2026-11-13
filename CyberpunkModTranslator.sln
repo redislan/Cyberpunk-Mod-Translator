@@ -11,6 +11,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CyberpunkModTranslator.Cli"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CyberpunkModTranslator.App", "src\App\CyberpunkModTranslator.App.csproj", "{A8572416-2676-46BE-85EA-B152AF0C0972}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{0FAE4C34-B292-4E02-A1A3-DC6A52382112}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CyberpunkModTranslator.Tests", "test\CyberpunkModTranslator.Tests\CyberpunkModTranslator.Tests.csproj", "{A32DC55E-4FF3-4A47-8978-265D5AB92966}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -32,10 +36,15 @@ Global
 		{A8572416-2676-46BE-85EA-B152AF0C0972}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A8572416-2676-46BE-85EA-B152AF0C0972}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A8572416-2676-46BE-85EA-B152AF0C0972}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A32DC55E-4FF3-4A47-8978-265D5AB92966}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A32DC55E-4FF3-4A47-8978-265D5AB92966}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A32DC55E-4FF3-4A47-8978-265D5AB92966}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A32DC55E-4FF3-4A47-8978-265D5AB92966}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{8923CA19-9732-46D6-9A82-AE77B41073E6} = {4D6B8B2F-0E2E-415B-BB6A-04630F8DC301}
 		{AE29B6BD-6253-4642-8A9A-7536B7E2C1F4} = {4D6B8B2F-0E2E-415B-BB6A-04630F8DC301}
 		{A8572416-2676-46BE-85EA-B152AF0C0972} = {4D6B8B2F-0E2E-415B-BB6A-04630F8DC301}
+		{A32DC55E-4FF3-4A47-8978-265D5AB92966} = {0FAE4C34-B292-4E02-A1A3-DC6A52382112}
 	EndGlobalSection
 EndGlobal

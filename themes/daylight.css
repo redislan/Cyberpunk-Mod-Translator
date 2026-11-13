@@ -1,0 +1,50 @@
+/*
+  @name: Daylight
+  @author: Sterben
+  @description: Light theme for daytime work.
+  @description.fr: Thème clair pour travailler en journée.
+*/
+
+:root {
+  color-scheme: light;
+  --bg: #f3f4f7;
+  --bg-2: #ffffff;
+  --bg-3: #eef0f4;
+  --line: #d5d9e2;
+  --text: #1b1f29;
+  --text-dim: #5c6578;
+  --accent: #2457d6;
+  --accent-2: #0a8fa3;
+  --danger: #c8233f;
+  --ok: #1d8a4c;
+  --warn: #b86200;
+  --todo: #0a78b8;
+  --check: #b86200;
+  --done: #1d8a4c;
+  --code: #7a8296;
+  --on-accent: #ffffff;
+  --logo-text: #ffffff;
+  --on-accent-2: #ffffff;
+  --row-line: #e6e9ef;
+  --row-hover: #f7f8fb;
+  --row-selected: #eaf0fd;
+  --entry-selected: #e3ebfc;
+  --sep-hover: #e4e8f0;
+  --banner-bg: #fff4e5;
+  --banner-line: #f0d2a6;
+  --accent-soft: rgba(36, 87, 214, .06);
+  --done-soft: rgba(29, 138, 76, .10);
+  --warn-soft: rgba(184, 98, 0, .08);
+  --overlay: rgba(20, 24, 33, .35);
+  --busy-overlay: rgba(20, 24, 33, .3);
+  --shadow: 0 6px 20px rgba(20, 24, 33, .12);
+}
+
+.topbar { box-shadow: 0 1px 6px rgba(20, 24, 33, .06); }
+.tabs { background: var(--bg-3); }
+.tab.on { background: var(--bg-2); box-shadow: 0 1px 3px rgba(20, 24, 33, .12); }
+.btn { background: var(--bg-2); }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
+.dialog, .welcome-card, .ml-card { box-shadow: 0 10px 40px rgba(20, 24, 33, .12); }
+.ml-sep { background: #f0f2f6; }

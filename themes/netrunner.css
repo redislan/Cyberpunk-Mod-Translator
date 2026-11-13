@@ -1,0 +1,79 @@
+/*
+  @name: Netrunner
+  @author: Sterben
+  @description: Magenta and cyan on deep violet, with a soft glow.
+  @description.fr: Magenta et cyan sur violet profond, avec un léger halo.
+*/
+
+:root {
+  color-scheme: dark;
+  --bg: #0b0a1a;
+  --bg-2: #110f25;
+  --bg-3: #1a1634;
+  --line: #2e2858;
+  --text: #ebe9ff;
+  --text-dim: #9d98cc;
+  --accent: #ff2bd6;
+  --accent-2: #29f0ff;
+  --danger: #ff4d6d;
+  --ok: #4dff9e;
+  --warn: #ffcc4d;
+  --todo: #29f0ff;
+  --check: #ffcc4d;
+  --done: #4dff9e;
+  --code: #6f6a9c;
+  --radius: 8px;
+  --radius-lg: 14px;
+  --on-accent: #ffffff;
+  --logo-text: #ffffff;
+  --on-accent-2: #0b0a1a;
+  --row-line: #1c1840;
+  --row-hover: #15122e;
+  --row-selected: #1f1942;
+  --entry-selected: #261f50;
+  --sep-hover: #2a2357;
+  --banner-bg: #2b2108;
+  --banner-line: #5c4712;
+  --accent-soft: rgba(255, 43, 214, .07);
+  --done-soft: rgba(77, 255, 158, .10);
+  --warn-soft: rgba(255, 204, 77, .10);
+  --overlay: rgba(6, 4, 20, .7);
+  --shadow: 0 8px 28px rgba(0, 0, 0, .5), 0 0 0 1px var(--line);
+}
+
+/* Fond : deux halos, magenta en haut a gauche et cyan en bas a droite */
+body {
+  background:
+    radial-gradient(1100px 600px at 0% 0%, rgba(255, 43, 214, .11), transparent 60%),
+    radial-gradient(1000px 640px at 100% 100%, rgba(41, 240, 255, .08), transparent 60%),
+    var(--bg);
+}
+::selection { background: var(--accent); color: #fff; }
+
+/* z-index : le halo sous la barre passe par-dessus les panneaux, sur toute la largeur */
+.topbar {
+  position: relative; z-index: 3; background: #110f25;
+  border-bottom-color: rgba(255, 43, 214, .4); box-shadow: 0 6px 24px rgba(255, 43, 214, .10);
+}
+.logo {
+  background: linear-gradient(135deg, var(--accent), #8a3dff);
+  text-shadow: 0 0 8px rgba(255, 255, 255, .6); letter-spacing: 2px;
+}
+.title { letter-spacing: 1px; }
+
+.btn:hover:not(:disabled) { border-color: var(--accent-2); box-shadow: 0 0 12px rgba(41, 240, 255, .25); }
+.btn.primary { background: linear-gradient(135deg, var(--accent), #a03dff); border-color: transparent; }
+.btn.primary:hover:not(:disabled) { filter: none; box-shadow: 0 0 16px rgba(255, 43, 214, .55); }
+.tab.on { color: var(--accent-2); box-shadow: inset 0 -2px 0 var(--accent-2); text-shadow: 0 0 10px rgba(41, 240, 255, .6); }
+
+.progress-bar div, .ml-summary .ml-bar div { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+input:focus, textarea:focus, select:focus { box-shadow: 0 0 0 1px var(--accent-2), 0 0 14px rgba(41, 240, 255, .25); }
+.row.selected { box-shadow: inset 3px 0 0 var(--accent), inset 40px 0 40px -40px rgba(255, 43, 214, .25); }
+
+.welcome-card, .ml-card, .dialog { box-shadow: 0 0 40px rgba(255, 43, 214, .10); }
+.welcome-card h1 { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2552; border-radius: 10px; border: 2px solid var(--bg-2); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }

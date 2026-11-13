@@ -83,6 +83,24 @@ public static class ResourcePath
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Un fichier dont le chemin est inconnu est designe par son hash ecrit en chiffres ("7469411510719000253").
+    /// Renvoie ce nombre si le texte n'est fait que de chiffres, sinon null.
+    /// </summary>
+    public static ulong? AsNumber(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || path.Length > 20) return null;
+        foreach (var c in path)
+            if (c < '0' || c > '9') return null;
+        return ulong.TryParse(path, out var hash) ? hash : null;
+    }
+
+    /// <summary>
+    /// Identifiant d'un fichier dans une archive : le nombre lui-meme pour un fichier designe par son hash,
+    /// sinon le hash du chemin (meme regle que WolvenKit, qui lit le hash dans un nom de fichier fait de chiffres).
+    /// </summary>
+    public static ulong Resolve(string path) => AsNumber(path) ?? Hash(path);
+
     public static ulong Hash(string path)
     {
         var bytes = Encoding.ASCII.GetBytes(Sanitize(path));

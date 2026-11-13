@@ -1,0 +1,93 @@
+/*
+  @name: Neon
+  @author: Sterben
+  @description: Night-city yellow and cyan, cut corners, light scanlines.
+  @description.fr: Jaune et cyan façon Night City, coins coupés, légères lignes de balayage.
+*/
+
+:root {
+  color-scheme: dark;
+  --bg: #08090c;
+  --bg-2: #0e1016;
+  --bg-3: #151821;
+  --line: #2a2f3d;
+  --text: #eef0f4;
+  --text-dim: #8f97a8;
+  --accent: #fcee0a;
+  --accent-2: #00f0ff;
+  --danger: #ff2a6d;
+  --ok: #39ff88;
+  --warn: #ffb000;
+  --todo: #00f0ff;
+  --check: #ffb000;
+  --done: #39ff88;
+  --code: #6b7488;
+  --radius: 0;
+  --radius-lg: 0;
+  --font: "Bahnschrift", "Segoe UI", system-ui, sans-serif;
+  --on-accent: #08090c;
+  --logo-text: #08090c;
+  --on-accent-2: #08090c;
+  --row-line: #171a24;
+  --row-hover: #10131b;
+  --row-selected: #171b10;
+  --entry-selected: #171b10;
+  --sep-hover: #1d2130;
+  --banner-bg: #2a1e00;
+  --banner-line: #5c4400;
+  --accent-soft: rgba(252, 238, 10, .06);
+  --done-soft: rgba(57, 255, 136, .10);
+  --warn-soft: rgba(255, 176, 0, .10);
+  --overlay: rgba(0, 0, 0, .72);
+  --shadow: 0 0 0 1px var(--line), 0 8px 24px rgba(0, 0, 0, .6);
+}
+
+/* Lignes de balayage tres legeres sur toute la fenetre (ne bloquent pas les clics) */
+body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 100;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, .018) 0 1px, transparent 1px 3px);
+}
+::selection { background: var(--accent); color: #000; }
+
+/* Barre du haut : trait jaune lumineux */
+.topbar { border-bottom: 1px solid var(--accent); box-shadow: 0 0 18px rgba(252, 238, 10, .12); }
+.logo {
+  letter-spacing: 3px; padding: 6px 12px 6px 10px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+}
+.title { text-transform: uppercase; letter-spacing: 2px; }
+
+/* Boutons a coins coupes */
+.btn, .tabs, .choice, .recent button, .menu-list {
+  clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
+}
+.btn { letter-spacing: .4px; }
+.btn.primary { text-transform: uppercase; letter-spacing: 1px; }
+.btn:hover:not(:disabled) { border-color: var(--accent-2); color: var(--accent-2); }
+.btn.primary:hover:not(:disabled) { color: var(--on-accent); filter: none; box-shadow: inset 0 0 0 2px #fff7a0; }
+.tab { text-transform: uppercase; letter-spacing: 1px; }
+.tab.on { background: transparent; color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); text-shadow: 0 0 10px rgba(252, 238, 10, .5); }
+
+/* Champs : halo cyan au focus */
+input:focus, textarea:focus, select:focus { box-shadow: 0 0 0 1px var(--accent-2), 0 0 12px rgba(0, 240, 255, .25); }
+.row .fr textarea:focus { box-shadow: 0 0 0 1px var(--accent), 0 0 12px rgba(252, 238, 10, .2); }
+
+/* Pastilles carrees */
+.chip, .status, .ml-tag, .entry .tag { border-radius: 0; }
+.progress-bar, .ml-summary .ml-bar { border-radius: 0; }
+.progress-bar div { box-shadow: 0 0 10px var(--accent); }
+
+/* Titres de section, fenetres */
+.side-title, .table-head, .detail h3, .recent h3 { color: var(--accent-2); letter-spacing: 1.2px; }
+.welcome-card, .ml-card { border-color: var(--line); border-left: 3px solid var(--accent); }
+.welcome-card h1, .ml-card h2 { text-transform: uppercase; letter-spacing: 2px; }
+.dialog { border-color: var(--accent); }
+.dialog header { text-transform: uppercase; letter-spacing: 2px; border-bottom-color: var(--accent); }
+.row.selected { box-shadow: inset 3px 0 0 var(--accent), inset 0 0 30px rgba(252, 238, 10, .04); }
+.toast { border-left-width: 3px; }
+
+/* Barres de defilement fines */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #262b38; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-2); }

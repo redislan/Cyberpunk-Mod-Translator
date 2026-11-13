@@ -21,7 +21,17 @@ public enum UnitStatus
 /// <summary>Un fichier de textes d'archive a produire : d'ou vient l'anglais, ou ecrire la traduction.</summary>
 public sealed class LocTarget
 {
+    /// <summary>Nom du fichier de l'archive d'origine (monmod.archive).</summary>
     public string ArchiveName { get; init; } = "";
+
+    /// <summary>
+    /// Ce qui designe l'archive dans le TSV et l'interface : son nom, ou son chemin dans le mod quand plusieurs
+    /// archives portent le meme nom (mods a options : "Option A/archive/pc/mod/x.archive", "Option B/...").
+    /// </summary>
+    public string ArchiveId { get; init; } = "";
+
+    /// <summary>Chemin de l'archive d'origine dans le mod.</summary>
+    public string ArchivePath { get; init; } = "";
     public LocKind Kind { get; init; }
     public string SourcePath { get; init; } = "";
     public string TargetPath { get; init; } = "";
@@ -47,7 +57,7 @@ public sealed class TextUnit
     public int LiteralIndex { get; init; }
 
     /// <summary>Nom de l'archive, ou "-" pour un fichier en clair.</summary>
-    public string SourceName => Loc?.ArchiveName ?? "-";
+    public string SourceName => Loc?.ArchiveId ?? "-";
 
     /// <summary>Chemin du fichier ecrit : chemin dans l'archive, ou chemin relatif dans le mod.</summary>
     public string FilePath => Loc?.TargetPath ?? Plain!.RelativePath.Replace('\\', '/');
@@ -77,7 +87,8 @@ public sealed class TextUnit
         return text.Replace("\r\n", "\n").Replace("\n", "\\n");
     }
 
-    public bool HasChange => !string.IsNullOrEmpty(Translation) && Translation != Current;
+    /// <summary>Une traduction faite seulement d'espaces ne compte pas (elle effacerait le texte en jeu).</summary>
+    public bool HasChange => !string.IsNullOrWhiteSpace(Translation) && Translation != Current;
 
     /// <summary>
     /// Comparaisons du code qui utilisent exactement ce texte (Equals(x, "Background"), x == "Menu"...).
@@ -128,6 +139,12 @@ public sealed class TranslationProject : IDisposable
     public List<LocText> Notes { get; } = new();
     public List<string> ArchivesWithoutText { get; } = new();
 
+    /// <summary>Archives illisibles (abimees, vides) : signalees dans les remarques, le reste du mod est analyse.</summary>
+    public List<string> FailedArchives { get; } = new();
+
+    /// <summary>Noms de fichier portes par plusieurs archives du mod.</summary>
+    private HashSet<string> _sharedArchiveNames = new(StringComparer.OrdinalIgnoreCase);
+
     private TranslationProject(ModPackage mod, ICompressor compressor, string targetLang)
     {
         Mod = mod;
@@ -150,11 +167,32 @@ public sealed class TranslationProject : IDisposable
         var project = new TranslationProject(ModPackage.Open(modPath), compressor, targetLang) { _quiet = quiet };
         try
         {
+            project._sharedArchiveNames = project.Mod.Archives
+                .GroupBy(a => Path.GetFileName(a), StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Count() > 1)
+                .Select(g => g.Key)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var archive in project.Mod.Archives)
-                project.ScanArchive(archive);
-            foreach (var f in project.Mod.Files)
-                if (PlainTextFile.IsSupported(f))
+            {
+                // Une archive abimee ou vide ne doit pas empecher de traduire le reste du mod
+                try
+                {
+                    project.ScanArchive(archive);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+                {
+                    project.FailedArchives.Add(archive);
+                    project.AddNote(new LocText("scan.archiveFailed", archive, ex.Message));
+                    Log.Write(quiet ? LogSeverity.Debug : LogSeverity.Warning, $"Archive ignoree : {archive}", ex);
+                }
+            }
+            var plainFiles = project.Mod.Files.Where(PlainTextFile.IsSupported).ToList();
+            // Fonctions maison du mod qui ne font qu'ecrire dans le journal : leurs textes sont du code
+            using (LogWrappers.Use(project.FindLogWrappers(plainFiles)))
+            {
+                foreach (var f in plainFiles)
                     project.ScanPlainFile(f);
+            }
             project.LinkTextsToComparisons();
             var u = project.Units;
             Log.Write(level, $"Analyse terminee : {u.Count} chaines ({u.Count(x => x.Status == UnitStatus.ToTranslate)} a traduire, " +
@@ -178,6 +216,7 @@ public sealed class TranslationProject : IDisposable
     {
         var fullPath = Mod.FullPath(relative);
         var archiveName = Path.GetFileName(relative);
+        var archiveId = _sharedArchiveNames.Contains(archiveName) ? relative.Replace('\\', '/') : archiveName;
         using var ar = RedArchive.Open(fullPath, _compressor);
 
         var cache = new Dictionary<ulong, (byte[] Bytes, LocalizationFile? Loc)>();
@@ -207,8 +246,9 @@ public sealed class TranslationProject : IDisposable
             return cache[e.Hash];
         }
 
+        // Chemin du jeu, ou hash en chiffres pour un fichier sans nom connu
         (byte[] Bytes, LocalizationFile? Loc)? Find(string path) =>
-            ar.ByHash.TryGetValue(ResourcePath.Hash(path), out var e) ? Load(e) : null;
+            ar.ByHash.TryGetValue(ResourcePath.Resolve(path), out var e) ? Load(e) : null;
 
         // Fichiers de textes presents dans l'archive (par le chemin, ou par le contenu si le nom est inconnu)
         var locEntries = ar.Files
@@ -222,8 +262,7 @@ public sealed class TranslationProject : IDisposable
         var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // 1) Ce que declare le .xl d'ArchiveXL
-        var xlPath = fullPath + ".xl";
-        var xl = File.Exists(xlPath) ? XlLocalization.Load(xlPath) : null;
+        var xl = FindXl(relative, path => ar.ByHash.ContainsKey(ResourcePath.Resolve(path)));
         if (xl != null)
         {
             foreach (var section in new[] { "onscreens", "subtitles" })
@@ -304,13 +343,13 @@ public sealed class TranslationProject : IDisposable
         foreach (var (srcPath, tgtPath, reason) in pairs)
         {
             if (!done.Add(ResourcePath.Sanitize(tgtPath))) continue;
-            var src = ulong.TryParse(srcPath, out var srcHash) && ar.ByHash.TryGetValue(srcHash, out var se) ? Load(se) : Find(srcPath);
+            var src = Find(srcPath);
             if (src?.Loc == null)
             {
                 AddNote(new LocText("scan.sourceMissing", archiveName, srcPath));
                 continue;
             }
-            var tgt = ulong.TryParse(tgtPath, out var tgtHash) && ar.ByHash.TryGetValue(tgtHash, out var te) ? Load(te) : Find(tgtPath);
+            var tgt = Find(tgtPath);
             var targetExists = tgt?.Loc != null;
             var templateBytes = targetExists ? tgt!.Value.Bytes : src.Value.Bytes;
             var template = targetExists ? tgt!.Value.Loc! : src.Value.Loc;
@@ -323,6 +362,8 @@ public sealed class TranslationProject : IDisposable
             var target = new LocTarget
             {
                 ArchiveName = archiveName,
+                ArchiveId = archiveId,
+                ArchivePath = relative,
                 Kind = src.Value.Loc.Kind,
                 SourcePath = srcPath,
                 TargetPath = tgtPath,
@@ -366,13 +407,72 @@ public sealed class TranslationProject : IDisposable
                 AddNote(new LocText("scan.missingLines", archiveName, missing, tgtPath));
         }
 
-        if (!Targets.Any(t => t.ArchiveName == archiveName))
-            ArchivesWithoutText.Add(archiveName);
+        if (!Targets.Any(t => t.ArchiveId == archiveId))
+            ArchivesWithoutText.Add(archiveId);
+    }
+
+    /// <summary>
+    /// Le .xl d'ArchiveXL qui declare les textes de cette archive : "archive.xl" s'il existe, sinon un autre .xl du meme
+    /// dossier dont au moins un chemin est dans l'archive (ArchiveXL charge tous les .xl, quel que soit leur nom).
+    /// </summary>
+    private XlLocalization? FindXl(string archiveRelative, Func<string, bool> inArchive)
+    {
+        XlLocalization? Load(string relative)
+        {
+            try
+            {
+                return XlLocalization.Load(Mod.FullPath(relative));
+            }
+            catch (Exception ex)
+            {
+                AddNote(new LocText("scan.xlFailed", relative, ex.Message));
+                return null;
+            }
+        }
+
+        var files = new HashSet<string>(Mod.Files, StringComparer.OrdinalIgnoreCase);
+        if (files.Contains(archiveRelative + ".xl")) return Load(archiveRelative + ".xl");
+
+        var dir = Path.GetDirectoryName(archiveRelative) ?? "";
+        foreach (var candidate in Mod.Files.Where(f => f.EndsWith(".xl", StringComparison.OrdinalIgnoreCase) &&
+                                                       string.Equals(Path.GetDirectoryName(f) ?? "", dir, StringComparison.OrdinalIgnoreCase) &&
+                                                       !files.Contains(f[..^3]))) // "autre.archive.xl" appartient a autre.archive
+        {
+            var xl = Load(candidate);
+            if (xl == null) continue;
+            var declared = xl.Sections.Values.SelectMany(s => s).SelectMany(l => l.Paths);
+            if (declared.Any(inArchive)) return xl;
+        }
+        return null;
     }
 
     // -----------------------------------------------------------------------------------------
     // Analyse des fichiers en clair (.lua, .reds, .yaml, .json, .tweak)
     // -----------------------------------------------------------------------------------------
+
+    private HashSet<string> FindLogWrappers(List<string> plainFiles)
+    {
+        var sources = new List<(string, string)>();
+        foreach (var relative in plainFiles)
+        {
+            var ext = Path.GetExtension(relative).ToLowerInvariant();
+            if (ext is not (".reds" or ".lua")) continue;
+            try
+            {
+                var full = Mod.FullPath(relative);
+                if (new FileInfo(full).Length > MaxPlainFileSize) continue;
+                sources.Add((ext, System.Text.Encoding.Latin1.GetString(SharedFile.ReadAllBytes(full))));
+            }
+            catch (Exception ex)
+            {
+                Log.Debug($"Recherche des fonctions de journal : {relative} illisible ({ex.Message})");
+            }
+        }
+        var wrappers = LogWrappers.Find(sources);
+        if (wrappers.Count > 0)
+            Log.Write(_quiet ? LogSeverity.Debug : LogSeverity.Info, "Fonctions de journal du mod : " + string.Join(", ", wrappers.OrderBy(w => w)), null);
+        return wrappers;
+    }
 
     private void ScanPlainFile(string relative)
     {
@@ -578,7 +678,7 @@ public sealed class TranslationProject : IDisposable
             if (u.Status == UnitStatus.Code && !includeCode && u.Translation == null) continue;
             rows.Add(new[]
             {
-                u.SourceName, u.FilePath, u.Key, u.Field, StatusLabel(u.Status),
+                u.SourceName, Tsv.ProtectNumber(u.FilePath), Tsv.ProtectNumber(u.Key), u.Field, StatusLabel(u.Status),
                 u.LinkedCode.Count > 0
                     ? UiText.T("tsv.alsoCompared", u.Context, string.Join(" ; ", u.LinkedCode.Select(Where)))
                     : u.Context,
@@ -590,56 +690,93 @@ public sealed class TranslationProject : IDisposable
         Tsv.Write(path, rows);
     }
 
-    public (int Applied, List<string> Warnings) ImportTsv(string path)
+    /// <summary>Resultat de la lecture d'un TSV : quelle ligne du fichier va sur quelle ligne du mod.</summary>
+    private sealed class TsvMatches
     {
-        var warnings = new List<string>();
-        var index = Units.ToDictionary(u => (u.SourceName, Norm(u.FilePath), u.Key, u.Field));
-        var applied = 0;
+        public List<(TextUnit Unit, string[] Row)> Rows { get; } = new();
+        public List<string> Warnings { get; } = new();
+
+        /// <summary>Lignes retrouvees par leur texte anglais (cle decalee par une mise a jour du mod, ou abimee par Excel).</summary>
+        public int Relocated { get; set; }
+    }
+
+    /// <summary>
+    /// Fait correspondre les lignes d'un TSV a celles du mod.
+    /// <list type="number">
+    /// <item>Par la cle (archive, fichier, cle, champ), si le texte anglais est toujours le meme.</item>
+    /// <item>Sinon par le texte anglais, dans le meme fichier et dans l'ordre : quand l'auteur du mod ajoute une chaine
+    /// dans un .lua, toutes les suivantes changent de numero mais pas de texte. Leur traduction n'est pas perdue.</item>
+    /// </list>
+    /// Une ligne qui ne correspond a rien n'est signalee que si elle portait une traduction.
+    /// </summary>
+    private TsvMatches MatchTsv(string path)
+    {
+        var result = new TsvMatches();
+        var index = new Dictionary<(string, string, string, string), TextUnit>();
+        foreach (var u in Units) index.TryAdd((u.SourceName, Norm(u.FilePath), u.Key, u.Field), u);
+
+        var used = new HashSet<TextUnit>();
+        var pending = new List<(string[] Row, bool Unknown)>();
         foreach (var row in Tsv.Read(path))
         {
             if (row.Length < 8)
             {
-                warnings.Add(UiText.T("tsv.missingColumns", string.Join(" | ", row)));
+                result.Warnings.Add(UiText.T("tsv.missingColumns", string.Join(" | ", row)));
                 continue;
             }
-            if (!index.TryGetValue((row[0], Norm(row[1]), row[2], row[3]), out var unit))
-            {
-                warnings.Add(UiText.T("tsv.unknownLine", row[0], row[1], row[2]));
-                continue;
-            }
+            row[1] = Tsv.UnprotectNumber(row[1]);
+            row[2] = Tsv.UnprotectNumber(row[2]);
+            var found = index.TryGetValue((row[0], Norm(row[1]), row[2], row[3]), out var unit);
             // La cle doit toujours designer le meme texte anglais : une cle decalee ecrirait la traduction au mauvais endroit.
-            if (row[6].Length > 0 && row[6] != Tsv.Escape(unit.Source))
+            if (found && (row[6].Length == 0 || row[6] == Tsv.Escape(unit!.Source)) && used.Add(unit!))
+                result.Rows.Add((unit!, row));
+            else
+                pending.Add((row, !found));
+        }
+
+        if (pending.Count == 0) return result;
+        var byText = Units.Where(u => !used.Contains(u))
+            .GroupBy(u => (u.SourceName, Norm(u.FilePath), u.Field, Tsv.Escape(u.Source)))
+            .ToDictionary(g => g.Key, g => new Queue<TextUnit>(g));
+        foreach (var (row, unknown) in pending)
+        {
+            if (row[6].Length > 0 && byText.TryGetValue((row[0], Norm(row[1]), row[3], row[6]), out var queue) && queue.Count > 0)
             {
-                warnings.Add(UiText.T("tsv.sourceChanged", row[0], row[1], row[2]));
+                result.Rows.Add((queue.Dequeue(), row));
+                result.Relocated++;
                 continue;
             }
+            var carriesWork = row[7].Length > 0;
+            if (!carriesWork) continue; // ligne sans traduction : rien a perdre, rien a signaler
+            result.Warnings.Add(UiText.T(unknown ? "tsv.unknownLine" : "tsv.sourceChanged", row[0], row[1], row[2]));
+        }
+        return result;
+    }
+
+    public (int Applied, List<string> Warnings) ImportTsv(string path)
+    {
+        var matches = MatchTsv(path);
+        var applied = 0;
+        foreach (var (unit, row) in matches.Rows)
+        {
             if (row.Length >= 9 && unit.LinkedCode.Count > 0)
                 unit.ApplyToLinkedCode = !IsNo(row[8]);
             if (row[7].Length == 0) continue;
             unit.Translation = Tsv.Unescape(row[7]);
             applied++;
         }
-        Log.Info($"Import du TSV {path} : {applied} ligne(s) importees, {warnings.Count} ignoree(s)");
-        foreach (var w in warnings) Log.Warn("TSV : " + w);
-        return (applied, warnings);
+        Log.Info($"Import du TSV {path} : {applied} ligne(s) importees (dont {matches.Relocated} retrouvee(s) par leur texte anglais), " +
+                 $"{matches.Warnings.Count} ignoree(s)");
+        foreach (var w in matches.Warnings) Log.Warn("TSV : " + w);
+        return (applied, matches.Warnings);
     }
 
     /// <summary>
     /// Lignes a traduire (ou a verifier) qui ont deja une traduction dans un TSV (la sauvegarde automatique de l'appli),
-    /// sans rien modifier ni rien ecrire dans le journal : sert a l'onglet Modlist.
+    /// sans rien modifier ni rien ecrire dans le journal : sert a l'onglet Modlist. Meme regle que <see cref="ImportTsv"/>.
     /// </summary>
-    public int CountTranslatedIn(string tsvPath)
-    {
-        var open = Units.Where(u => u.Status is UnitStatus.ToTranslate or UnitStatus.ToCheck)
-            .ToDictionary(u => (u.SourceName, Norm(u.FilePath), u.Key, u.Field), u => u.Source);
-        var count = 0;
-        // Meme regle que ImportTsv : une ligne dont l'anglais ne correspond plus (cle decalee) ne compte pas comme traduite.
-        foreach (var row in Tsv.Read(tsvPath))
-            if (row.Length >= 8 && row[7].Length > 0 && open.Remove((row[0], Norm(row[1]), row[2], row[3]), out var source) &&
-                (row[6].Length == 0 || row[6] == Tsv.Escape(source)))
-                count++;
-        return count;
-    }
+    public int CountTranslatedIn(string tsvPath) =>
+        MatchTsv(tsvPath).Rows.Count(m => m.Row[7].Length > 0 && m.Unit.Status is UnitStatus.ToTranslate or UnitStatus.ToCheck);
 
     private static string Norm(string path) => ResourcePath.Sanitize(path);
 
@@ -674,12 +811,32 @@ public sealed class TranslationProject : IDisposable
     {
         var baseName = Path.GetFileNameWithoutExtension(originalArchiveName);
         var candidate = "#" + baseName + suffix + ".archive";
-        while (string.CompareOrdinal(candidate, originalArchiveName) >= 0)
+        for (var i = 0; i < 32 && string.CompareOrdinal(candidate, originalArchiveName) >= 0; i++)
             candidate = "!" + candidate;
+        if (string.CompareOrdinal(candidate, originalArchiveName) < 0) return candidate;
+
+        // Nom d'origine qui commence par un espace ou un caractere place avant "!" : aucun "!" ne passe devant.
+        // On garde ce debut et on glisse le "#" juste apres (" mod.archive" -> " #mod_FR.archive").
+        var keep = 0;
+        while (keep < baseName.Length && baseName[keep] < '#') keep++;
+        candidate = baseName[..keep] + "#" + baseName[keep..] + suffix + ".archive";
+        if (string.CompareOrdinal(candidate, originalArchiveName) >= 0)
+            Log.Warn($"Nom de patch : impossible de passer avant \"{originalArchiveName}\", \"{candidate}\" utilise quand meme");
         return candidate;
     }
 
+    /// <summary>
+    /// Petit fichier pose a la racine de chaque traduction fabriquee (et dans son zip). C'est lui qui dit, a la
+    /// fabrication suivante, que le dossier du meme nom vient bien de l'outil et peut etre remplace.
+    /// </summary>
+    public const string MarkerFile = "cmt-translation.txt";
+
     /// <param name="outputName">Nom du mod traduit (par defaut : nom du mod + " - FR", ou le suffixe de la langue cible).</param>
+    /// <remarks>
+    /// Rien n'est jamais efface a l'aveugle : la traduction est fabriquee dans un dossier de travail, puis mise a sa
+    /// place. Un dossier (ou un zip) du meme nom n'est remplace que s'il vient de l'outil ; sinon il est renomme
+    /// ("... .old-date") et signale. Un nom de sortie qui designe le mod d'origine ou un dossier parent est refuse.
+    /// </remarks>
     public BuildResult Build(string outputDir, ICompressor? writeCompressor, bool makeZip = true, string? outputName = null)
     {
         var result = new BuildResult();
@@ -698,12 +855,78 @@ public sealed class TranslationProject : IDisposable
             if (tags != null) result.Warnings.Add(UiText.T("build.tagsDiffer", u.FilePath, u.Key, tags));
         }
 
-        var modDir = Path.Combine(outputDir, SafeName(string.IsNullOrWhiteSpace(outputName) ? Mod.Name + " - " + LangSuffix(TargetLang) : outputName));
-        Log.Info($"Fabrication : {changed.Count} ligne(s) modifiee(s) vers {modDir}");
-        if (Directory.Exists(modDir)) Directory.Delete(modDir, true);
+        var suffix = LangSuffix(TargetLang);
+        // Windows retire lui-meme les points et espaces de fin : on le fait avant, pour savoir quel dossier sera touche
+        var name = SafeName(string.IsNullOrWhiteSpace(outputName) ? Mod.Name + " - " + suffix : outputName).TrimEnd('.', ' ');
+        if (name.Length == 0)
+            throw new InvalidOperationException(UiText.T("build.badName", outputName ?? ""));
+        var outRoot = Path.GetFullPath(outputDir);
+        var modDir = Path.Combine(outRoot, name);
+        if (Overlaps(modDir, Mod.Root))
+            throw new InvalidOperationException(UiText.T("build.overSource", modDir));
+        if (File.Exists(modDir))
+            throw new InvalidOperationException(UiText.T("build.nameIsFile", modDir));
 
-        // Archives
-        foreach (var archiveGroup in changed.Where(u => u.Loc != null).GroupBy(u => u.Loc!.ArchiveName))
+        Log.Info($"Fabrication : {changed.Count} ligne(s) modifiee(s) vers {modDir}");
+        Directory.CreateDirectory(outRoot);
+        var workDir = Path.Combine(outRoot, ".cmt-" + Guid.NewGuid().ToString("N")[..8]);
+        var archives = new List<string>();
+        var plainFiles = new List<string>();
+        try
+        {
+            Directory.CreateDirectory(workDir);
+            BuildArchives(changed, workDir, suffix, writeCompressor, result, archives);
+            BuildPlainFiles(changed, workDir, result, plainFiles);
+            File.WriteAllText(Path.Combine(workDir, MarkerFile),
+                $"Cyberpunk Mod Translator\r\nmod: {Mod.Name}\r\nlanguage: {TargetLang}\r\n" +
+                "This file tells the tool that it built this folder and may replace it on the next build.\r\n");
+
+            MoveAsideUnlessOurs(modDir, Directory.Exists(modDir), IsOurFolder(modDir, suffix), result);
+            Directory.Move(workDir, modDir);
+        }
+        catch
+        {
+            // Echec en cours de route : on ne laisse pas de dossier de travail, et la traduction precedente est intacte
+            try
+            {
+                if (Directory.Exists(workDir)) Directory.Delete(workDir, true);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Dossier de travail non supprime : {workDir}", ex);
+            }
+            throw;
+        }
+        result.Archives.AddRange(archives.Select(r => Path.Combine(modDir, r)));
+        result.PlainFiles.AddRange(plainFiles.Select(r => Path.Combine(modDir, r)));
+
+        // Textes traduits lies a une comparaison mais dont le report a ete refuse : on le rappelle
+        foreach (var u in changed.Where(u => u.LinkedCode.Count > 0 && !u.ApplyToLinkedCode))
+            result.Warnings.Add(UiText.T("build.linkRefused", u.Source, string.Join(" ; ", u.LinkedCode.Select(Where))));
+
+        if (makeZip)
+        {
+            var zip = modDir + ".zip";
+            var tmpZip = zip + ".tmp";
+            if (File.Exists(tmpZip)) File.Delete(tmpZip);
+            ZipFile.CreateFromDirectory(modDir, tmpZip, CompressionLevel.Optimal, false);
+            MoveAsideUnlessOurs(zip, File.Exists(zip), IsOurZip(zip, suffix), result);
+            File.Move(tmpZip, zip, true);
+            result.Zip = zip;
+        }
+        Log.Info($"Fabrication terminee : {result.Archives.Count} archive(s), {result.PlainFiles.Count} fichier(s) en clair" +
+                 (result.Zip != null ? $", {result.Zip}" : ""));
+        foreach (var info in result.Infos) Log.Info("Fabrication : " + info);
+        foreach (var w in result.Warnings) Log.Warn("Fabrication : " + w);
+        return result;
+    }
+
+    /// <summary>Archives de la traduction : une par archive d'origine, rangee au meme endroit que l'originale.</summary>
+    private void BuildArchives(List<TextUnit> changed, string workDir, string suffix, ICompressor? writeCompressor,
+        BuildResult result, List<string> written)
+    {
+        var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var archiveGroup in changed.Where(u => u.Loc != null).GroupBy(u => u.Loc!.ArchiveId))
         {
             var files = new List<(string Path, byte[] Data)>();
             foreach (var targetGroup in archiveGroup.GroupBy(u => u.Loc!))
@@ -727,7 +950,18 @@ public sealed class TranslationProject : IDisposable
                 files.Add((target.TargetPath, bytes));
             }
 
-            var archivePath = Path.Combine(modDir, "archive", "pc", "mod", PatchArchiveName(archiveGroup.Key, "_" + LangSuffix(TargetLang)));
+            var original = archiveGroup.First().Loc!;
+            var patchName = PatchArchiveName(original.ArchiveName, "_" + suffix);
+            var relative = ArchiveOutputDir(original.ArchivePath) + "/" + patchName;
+            if (!usedPaths.Add(relative))
+            {
+                // Deux archives du meme nom rangees hors des dossiers habituels : chacune reste a cote de son originale
+                relative = (Path.GetDirectoryName(Mod.OutputPath(original.ArchivePath)) ?? "").Replace('\\', '/').Trim('/') + "/" + patchName;
+                relative = relative.TrimStart('/');
+                if (!usedPaths.Add(relative))
+                    throw new InvalidOperationException(UiText.T("build.archiveClash", patchName));
+            }
+            var archivePath = Path.Combine(workDir, relative.Replace('/', Path.DirectorySeparatorChar));
             RedArchiveWriter.Write(archivePath, files, writeCompressor);
 
             // Verification : on relit l'archive produite
@@ -735,14 +969,31 @@ public sealed class TranslationProject : IDisposable
             {
                 foreach (var (p, data) in files)
                 {
-                    if (!ar.ByHash.TryGetValue(ResourcePath.Hash(p), out var e) || !ar.ReadMain(e).AsSpan().SequenceEqual(data))
+                    if (!ar.ByHash.TryGetValue(ResourcePath.Resolve(p), out var e) || !ar.ReadMain(e).AsSpan().SequenceEqual(data))
                         throw new InvalidDataException(UiText.T("build.verifyArchive", p));
                 }
             }
-            result.Archives.Add(archivePath);
+            written.Add(relative.Replace('/', Path.DirectorySeparatorChar));
         }
+    }
 
-        // Fichiers en clair : copie modifiee au meme chemin (le mod FR se place sous l'original dans MO2)
+    /// <summary>
+    /// Dossier du patch dans la traduction : le meme que l'archive d'origine quand elle est dans un dossier lu par le jeu
+    /// ("archive/pc/mod", y compris sous un dossier d'option, ou "mods/&lt;nom&gt;/archives" de REDmod), sinon "archive/pc/mod".
+    /// </summary>
+    private string ArchiveOutputDir(string archiveRelative)
+    {
+        var dir = (Path.GetDirectoryName(Mod.OutputPath(archiveRelative)) ?? "").Replace('\\', '/').Trim('/');
+        if (dir.Equals("archive/pc/mod", StringComparison.OrdinalIgnoreCase) ||
+            dir.EndsWith("/archive/pc/mod", StringComparison.OrdinalIgnoreCase) ||
+            Regex.IsMatch(dir, @"(^|/)mods/[^/]+/archives$", RegexOptions.IgnoreCase))
+            return dir;
+        return "archive/pc/mod";
+    }
+
+    /// <summary>Fichiers en clair : copie modifiee au meme chemin (le mod FR se place sous l'original dans MO2).</summary>
+    private void BuildPlainFiles(List<TextUnit> changed, string workDir, BuildResult result, List<string> written)
+    {
         var plainChanges = new Dictionary<PlainTarget, Dictionary<int, string>>();
         void SetChange(TextUnit u, string text)
         {
@@ -775,8 +1026,10 @@ public sealed class TranslationProject : IDisposable
 
         foreach (var (target, replacements) in plainChanges)
         {
-            var bytes = target.File.Apply(replacements);
-            var outPath = Path.Combine(modDir, target.RelativePath);
+            var bytes = target.File.Apply(replacements, out var switchedToUtf8);
+            if (switchedToUtf8) result.Warnings.Add(UiText.T("build.reencoded", target.RelativePath));
+            var relative = Mod.OutputPath(target.RelativePath).Replace('/', Path.DirectorySeparatorChar);
+            var outPath = Path.Combine(workDir, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
             File.WriteAllBytes(outPath, bytes);
 
@@ -790,25 +1043,88 @@ public sealed class TranslationProject : IDisposable
                 if (check.Literals[i].Value != expected)
                     throw new InvalidDataException(UiText.T("build.verifyString", target.RelativePath, i));
             }
-            result.PlainFiles.Add(outPath);
+            written.Add(relative);
         }
+    }
 
-        // Textes traduits lies a une comparaison mais dont le report a ete refuse : on le rappelle
-        foreach (var u in changed.Where(u => u.LinkedCode.Count > 0 && !u.ApplyToLinkedCode))
-            result.Warnings.Add(UiText.T("build.linkRefused", u.Source, string.Join(" ; ", u.LinkedCode.Select(Where))));
+    // -----------------------------------------------------------------------------------------
+    // Garde-fous de la fabrication : ne jamais effacer ce qui ne vient pas de l'outil
+    // -----------------------------------------------------------------------------------------
 
-        if (makeZip)
+    /// <summary>Deux dossiers identiques, ou l'un dans l'autre.</summary>
+    private static bool Overlaps(string a, string b)
+    {
+        static string N(string p) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(p)) + Path.DirectorySeparatorChar;
+        var (x, y) = (N(a), N(b));
+        var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return x.StartsWith(y, cmp) || y.StartsWith(x, cmp);
+    }
+
+    /// <summary>
+    /// Contenu d'une traduction fabriquee par l'outil : le fichier marqueur, ou (versions 0.8.0 et avant, sans marqueur)
+    /// des archives qui portent toutes le nom donne par l'outil ("#nom_FR.archive").
+    /// </summary>
+    private static bool LooksLikeOurs(IEnumerable<string> relativePaths, string suffix)
+    {
+        var paths = relativePaths.Select(p => p.Replace('\\', '/')).ToList();
+        if (paths.Any(p => p.Equals(MarkerFile, StringComparison.OrdinalIgnoreCase))) return true;
+        var archives = paths.Where(p => p.EndsWith(".archive", StringComparison.OrdinalIgnoreCase)).ToList();
+        return archives.Count > 0 && archives.All(p =>
         {
-            var zip = modDir + ".zip";
-            if (File.Exists(zip)) File.Delete(zip);
-            ZipFile.CreateFromDirectory(modDir, zip, CompressionLevel.Optimal, false);
-            result.Zip = zip;
+            var file = p[(p.LastIndexOf('/') + 1)..];
+            return (file.StartsWith('#') || file.StartsWith('!')) && file.Contains('#') &&
+                   file.EndsWith("_" + suffix + ".archive", StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    private static bool IsOurFolder(string dir, string suffix)
+    {
+        try
+        {
+            return Directory.Exists(dir) &&
+                   LooksLikeOurs(Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(dir, f)), suffix);
         }
-        Log.Info($"Fabrication terminee : {result.Archives.Count} archive(s), {result.PlainFiles.Count} fichier(s) en clair" +
-                 (result.Zip != null ? $", {result.Zip}" : ""));
-        foreach (var info in result.Infos) Log.Info("Fabrication : " + info);
-        foreach (var w in result.Warnings) Log.Warn("Fabrication : " + w);
-        return result;
+        catch (Exception ex)
+        {
+            Log.Warn($"Dossier existant illisible, il sera garde : {dir}", ex);
+            return false;
+        }
+    }
+
+    private static bool IsOurZip(string zip, string suffix)
+    {
+        try
+        {
+            if (!File.Exists(zip)) return false;
+            using var archive = ZipFile.OpenRead(zip);
+            return LooksLikeOurs(archive.Entries.Where(e => e.Name.Length > 0).Select(e => e.FullName), suffix);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Zip existant illisible, il sera garde : {zip}", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Fait la place pour la nouvelle traduction : une ancienne traduction de l'outil est supprimee ; tout autre
+    /// dossier ou zip du meme nom est renomme ("nom.old-20261113-224500") et signale, jamais efface.
+    /// </summary>
+    private static void MoveAsideUnlessOurs(string path, bool exists, bool ours, BuildResult result)
+    {
+        if (!exists) return;
+        if (ours)
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, true);
+            else File.Delete(path);
+            return;
+        }
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+        var aside = $"{path}.old-{stamp}";
+        for (var n = 2; Directory.Exists(aside) || File.Exists(aside); n++) aside = $"{path}.old-{stamp}-{n}";
+        if (Directory.Exists(path)) Directory.Move(path, aside);
+        else File.Move(path, aside);
+        result.Warnings.Add(UiText.T("build.keptOld", Path.GetFileName(path), Path.GetFileName(aside)));
     }
 
     public static string SafeName(string name)

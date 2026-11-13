@@ -23,7 +23,11 @@ public static class TextClassifier
         var v = value.Trim();
         if (v.Length == 0 || !Word2.IsMatch(v)) return StringKind.Code;
         if (v.StartsWith("LocKey#", StringComparison.OrdinalIgnoreCase)) return StringKind.Code;
-        if (Numberish.IsMatch(v) || Color.IsMatch(v)) return StringKind.Code;
+        if (Numberish.IsMatch(v) || Color.IsMatch(v) || HexList.IsMatch(v)) return StringKind.Code;
+        // Modele fait seulement de variables ("{label} {cost}{dollar}", "%s: %d") : aucun mot a traduire
+        if (!Word2.IsMatch(Placeholder.Replace(StripInterpolations(v), " "))) return StringKind.Code;
+        // Chemin relatif ("./Collabs/Custom Poses")
+        if (v.StartsWith("./") || v.StartsWith("../") || v.StartsWith(".\\") || v.StartsWith("..\\")) return StringKind.Code;
 
         var hasSpace = v.Any(char.IsWhiteSpace);
         if (!hasSpace)
@@ -47,6 +51,36 @@ public static class TextClassifier
         return StringKind.Text;
     }
 
+    private static readonly Regex HexList = new(@"^0x[0-9A-Fa-f]+(\s*[,;]?\s*(0x[0-9A-Fa-f]+|\d+))*$", RegexOptions.Compiled);
+    private static readonly Regex Placeholder = new(@"\{[^{}\s]*\}|%[-+#0]*\d*(?:\.\d+)?[sdifxXcq]", RegexOptions.Compiled);
+
+    // ---- Requetes SQL (mods qui gardent leurs donnees dans une base : AMM...) ----
+    private static readonly Regex SqlStart = new(
+        @"^\(?\s*(SELECT\s+(\*|DISTINCT\b|[\w.,\s()*]+\bFROM\b)|INSERT\s+(OR\s+\w+\s+)?INTO\s+\w|DELETE\s+FROM\s+[a-z_]\w*|UPDATE\s+\w+\s+SET\b|" +
+        @"CREATE\s+TABLE\b|DROP\s+TABLE\b|ALTER\s+TABLE\b|PRAGMA\s+\w)", RegexOptions.Compiled);
+    private static readonly Regex SqlStrong = new(
+        @"\b(SELECT|FROM|WHERE|ORDER BY|GROUP BY|LIKE|INSERT INTO|DELETE FROM|VALUES|DISTINCT|JOIN|IS NOT NULL|IS NULL)\b", RegexOptions.Compiled);
+    private static readonly Regex SqlWeak = new(@"\b(AND|OR|IN|SET|ASC|DESC|LIMIT|NOT)\b", RegexOptions.Compiled);
+    private static readonly Regex SqlEvidence = new(@"\b[a-z]+_[a-z0-9_]+\b|=\s*['""%\d]|'%|\bIN\s+%s", RegexOptions.Compiled);
+    private static readonly Regex ColumnList = new(
+        @"^\(?\s*""?[a-z][a-z0-9_]*""?(\s*,\s*""?[a-z][a-z0-9_]*""?){2,}\s*,?\s*\)?$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Requete SQL ou morceau de requete : "SELECT * FROM entities WHERE ...", " ORDER BY anim_name ASC",
+    /// "AND entity_id IN %s", "(entity_id, entity_name, cat_id)". Les mots-cles doivent etre en majuscules et la chaine
+    /// doit contenir un nom de colonne ou une comparaison : "SELECT A CHARACTER" reste du texte.
+    /// </summary>
+    internal static bool LooksLikeSql(string value)
+    {
+        var v = value.Trim();
+        if (SqlStart.IsMatch(v)) return true;
+        if (ColumnList.IsMatch(v) && v.Contains('_')) return true;
+        var strong = SqlStrong.Matches(v).Select(m => m.Value).Distinct().Count();
+        var weak = SqlWeak.Matches(v).Select(m => m.Value).Distinct().Count();
+        if (strong + weak >= 4 && strong >= 2) return true;
+        return SqlEvidence.IsMatch(v) && (strong >= 1 || weak >= 2);
+    }
+
     private static readonly Regex PathChars = new(@"^[\w./\\~:-]+$", RegexOptions.Compiled);
     private static readonly Regex Extension = new(@"\.[A-Za-z0-9]{1,6}$", RegexOptions.Compiled);
     private static readonly Regex Assignment = new(@"^\s*[\[A-Za-z_][\w.'""\[\]]*\s*=\s*([{'""\[]|true\b|false\b|nil\b|-?\d)", RegexOptions.Compiled);
@@ -67,6 +101,8 @@ public static class TextClassifier
     private static readonly Regex MethodCall = new(@"[A-Za-z_]\w*[.:][A-Za-z_]\w*\(", RegexOptions.Compiled);
     private static readonly Regex KeyEquals = new(@"\b[A-Za-z_]\w*=[^\s=]", RegexOptions.Compiled);
     private static readonly Regex ProtocolTag = new(@"^[A-Z]{3,}\d+\b", RegexOptions.Compiled);
+    private static readonly Regex ScopedName = new(@"[A-Za-z_]\w*::[A-Za-z_]\w*", RegexOptions.Compiled);
+    private static readonly Regex KeyEqualsFormat = new(@"\b[A-Za-z_]\w*\s*=\s*%[-+#0]*\d*(?:\.\d+)?[sdifxXcq]", RegexOptions.Compiled);
 
     /// <summary>
     /// Morceau de code genere, de condition ou de journal technique :
@@ -77,7 +113,9 @@ public static class TextClassifier
         var v = StripInterpolations(value);
         return v.Contains("==") || v.Contains("~=") || v.Contains("!=") || v.Contains("&&") || v.Contains("||") || v.Contains("()") ||
         v.Contains("))") || v.TrimEnd().EndsWith('=') || v.TrimEnd().EndsWith('{') || LooseBrace.IsMatch(v) || Assignment.IsMatch(v) ||
-        MethodCall.IsMatch(v) || KeyEquals.Matches(v).Count >= 2 || ProtocolTag.IsMatch(v);
+        MethodCall.IsMatch(v) || KeyEquals.Matches(v).Count >= 2 || ProtocolTag.IsMatch(v) ||
+        // "Classe::Methode", "{x = %f, y = %f}", requetes SQL
+        ScopedName.IsMatch(v) || KeyEqualsFormat.Matches(v).Count >= 2 || LooksLikeSql(v);
     }
 
     /// <summary>Remplace les \(expression) des chaines redscript s"..." par un mot neutre avant l'analyse.</summary>
@@ -205,8 +243,10 @@ public static class TextClassifier
     {
         if (DebugCalls.Contains(name)) return true;
         if (Regex.IsMatch(name, @"^(Log|log)([A-Z_]|$)")) return true;
+        if (LogWrappers.Contains(name)) return true; // fonction maison qui ne fait qu'ecrire dans le journal (voir LogWrappers)
         // addLog / pushLog / showLog remplissent souvent un journal affiche dans la fenetre du mod : du texte
-        if (Regex.IsMatch(name, @"[A-Za-z0-9]Log$|_log$|^[a-z]{1,2}log$") &&
+        // ... et "Log" au milieu d'un nom : LHUDLogDebug, MyModLogError
+        if (Regex.IsMatch(name, @"[A-Za-z0-9]Log$|_log$|^[a-z]{1,2}log$|[A-Za-z0-9]Log[A-Z][A-Za-z]*$") &&
             !Regex.IsMatch(name, @"^(add|push|append|insert|show|display|set|ui|UI|Add|Push|Append|Insert|Show|Display|Set)[A-Z_]?")) return true;
         if (Regex.IsMatch(receiver, @"(^|[.:])(spdlog|log|logger|Logger|Log|Logging)$") || Regex.IsMatch(receiver, @"[a-z]Log$|[Ll]ogger$")) return true;
         if (language == "lua" && receiver.Length > 0 && name is "info" or "warning" or "warn" or "debug" or "trace" or "critical" or "error")

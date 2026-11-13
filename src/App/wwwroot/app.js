@@ -15,7 +15,8 @@ const STATUS = {
 };
 const LANGS = ['fr-fr', 'de-de', 'es-es', 'es-mx', 'it-it', 'pl-pl', 'pt-br', 'ru-ru', 'jp-jp', 'kr-kr', 'zh-cn', 'zh-tw',
   'cz-cz', 'hu-hu', 'tr-tr', 'th-th', 'ua-ua', 'ar-ar'];
-const TAG_RE = /\{[^{}]*\}|<[^<>]*>|\n|%[-+#0]*\d*(?:\.\d+)?[sdifxXcq]|\\\([^)]*\)/g;
+// Meme regle que le moteur (TagPattern dans TranslationProject.cs) : l'alerte de la page et celle de la fabrication disent la meme chose
+const TAG_RE = /\{[^{}]*\}|<[^<>]*>|\n|\\n|%[-+#0]*\d*(?:\.\d+)?[sdifxXcq]|\\\([^)]*\)/g;
 
 const S = {
   state: null,
@@ -30,6 +31,8 @@ const S = {
   pending: new Map(),
   saveTimer: null,
   tab: 'translate', // 'translate' ou 'modlist'
+  themeShown: null, // theme affiche ('' = theme d'origine ; null = celui des reglages, charge par la page)
+  themeRestore: null, // theme a remettre si on ferme les Parametres sans enregistrer (null = rien a remettre)
 };
 
 const $ = (id) => document.getElementById(id);
@@ -57,6 +60,44 @@ function applyStaticTexts() {
   for (const e of document.querySelectorAll('[data-i18n]')) e.textContent = t(e.dataset.i18n);
   for (const e of document.querySelectorAll('[data-i18n-title]')) e.title = t(e.dataset.i18nTitle);
   for (const e of document.querySelectorAll('[data-i18n-placeholder]')) e.placeholder = t(e.dataset.i18nPlaceholder);
+}
+
+// -------------------------------------------------------------------------------------------------
+// Theme : un fichier .css du dossier themes, charge apres app.css (lien #themeCss de la page).
+// Le programme ne fait que le servir : le reste de l'interface ne change pas.
+// -------------------------------------------------------------------------------------------------
+
+/** Affiche un theme ('' = theme d'origine) sans l'enregistrer : apercu dans les Parametres. */
+function showTheme(id) {
+  const link = $('themeCss');
+  if (!link) return;
+  // v : force la relecture du fichier (on peut modifier un theme et le reselectionner)
+  link.href = `/theme.css?id=${encodeURIComponent(id || '')}&v=${Date.now()}`;
+  S.themeShown = id || '';
+}
+
+/**
+ * Secours (Ctrl+Alt+T) : remet le theme d'origine et l'enregistre. Sert quand un theme rend l'interface
+ * inutilisable (tout cache, texte de la couleur du fond) et qu'on ne peut plus atteindre les Parametres.
+ */
+async function resetTheme() {
+  showTheme('');
+  S.themeRestore = null;
+  if (!S.state) return;
+  try {
+    S.state = await api('/settings', { ...S.state.settings, theme: '' });
+    toast(t('settings.theme.reset'), 'ok');
+  } catch (e) {
+    reportError(e, 'theme');
+    toast(e.message, 'error');
+  }
+}
+
+/** Remet le theme d'avant l'apercu (Parametres fermes sans enregistrer). */
+function restoreTheme() {
+  if (S.themeRestore === null) return;
+  if (S.themeShown !== null && S.themeShown !== S.themeRestore) showTheme(S.themeRestore);
+  S.themeRestore = null;
 }
 
 /** Codes de langue du jeu -> codes standard (noms de langue, correcteur d'orthographe). */
@@ -633,6 +674,8 @@ function shortcuts() {
 function closeModal() {
   $('modal').classList.add('hidden');
   $('dialog').replaceChildren();
+  // Parametres fermes sans enregistrer (Annuler, Echap) : l'apercu de theme s'en va
+  restoreTheme();
 }
 
 function showModal(title, body, buttons, left) {
@@ -810,6 +853,8 @@ async function openMod(path) {
   const p = st.project;
   toast(t('open.done', p.name, S.units.filter((u) => u.status !== 'code').length, p.files.length), 'ok');
   if (p.restored > 0) toast(t('open.restored', p.restored), 'ok');
+  // Mod mis a jour : des traductions de la sauvegarde n'ont plus de ligne ou aller (une copie de la sauvegarde est gardee)
+  if (p.lost > 0) toast(t('open.lost', p.lost, p.backup || ''), 'error');
   return true;
 }
 
@@ -878,6 +923,8 @@ async function openSettings() {
   // Relit le dossier des langues : un fichier qu'on vient d'y poser apparait tout de suite
   try {
     await loadLanguage();
+    // les textes fixes viennent d'etre remis : l'en-tete reprend le nom du mod ouvert
+    if (S.state) renderHeader();
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -906,6 +953,34 @@ async function openSettings() {
   const broken = UI.languages.filter((l) => l.error).map((l) => el('div', { class: 'help warn' },
     '⚠ ' + t('settings.uiLang.broken', l.file, l.error === 'badname' ? t('settings.uiLang.badName') : l.error)));
 
+  // Theme : theme d'origine ou un .css du dossier themes (relu a chaque ouverture). Apercu des qu'on le choisit.
+  let themes = { setting: '', themes: [], folder: '' };
+  try {
+    themes = await api('/themes');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+  const savedTheme = st.theme || '';
+  const savedFound = themes.themes.find((x) => x.id.toLowerCase() === savedTheme.toLowerCase());
+  const theme = el('select', {},
+    el('option', { value: '', selected: !savedFound }, t('settings.theme.default')),
+    ...themes.themes.map((x) => el('option', { value: x.id, selected: x === savedFound }, x.name)));
+  const themeInfo = el('div', { class: 'help' });
+  const updateThemeInfo = () => {
+    const x = themes.themes.find((y) => y.id === theme.value);
+    const parts = [];
+    if (x && x.description) parts.push(x.description);
+    if (x && x.author) parts.push(t('settings.theme.by', x.author));
+    themeInfo.textContent = parts.join(' · ');
+  };
+  theme.addEventListener('change', () => {
+    showTheme(theme.value);
+    updateThemeInfo();
+  });
+  updateThemeInfo();
+  const themeMissing = savedTheme && !savedFound
+    ? el('div', { class: 'help warn' }, '⚠ ' + t('settings.theme.missing', savedTheme)) : null;
+
   // Le selecteur de dossier remplace temporairement la fenetre : on reaffiche les reglages ensuite
   // (les champs sont les memes objets, leurs valeurs sont conservees).
   const browse = (target, title, key) => el('button', {
@@ -917,6 +992,10 @@ async function openSettings() {
     },
   }, t('settings.browse'));
   const build = () => {
+    // Fermer sans enregistrer remet ce theme. Le selecteur de dossier a pu fermer la fenetre entre-temps :
+    // on remet alors l'apercu du theme choisi.
+    S.themeRestore = savedTheme;
+    if (S.themeShown !== null && S.themeShown !== theme.value) showTheme(theme.value);
     showModal(t('settings.title'),
       el('div', {},
         el('div', { class: 'form-row' }, el('label', {}, t('settings.uiLang')), uiLang, credit,
@@ -925,6 +1004,11 @@ async function openSettings() {
             el('div', { class: 'help' }, t('settings.uiLang.help')),
             el('button', { class: 'btn small', title: UI.folder, onclick: () => api('/reveal-lang', {}).catch((e) => toast(e.message, 'error')) },
               t('settings.uiLang.folder')))),
+        el('div', { class: 'form-row' }, el('label', {}, t('settings.theme')), theme, themeInfo, themeMissing,
+          el('div', { class: 'lang-tools' },
+            el('div', { class: 'help' }, t('settings.theme.help')),
+            el('button', { class: 'btn small', title: themes.folder, onclick: () => api('/reveal-themes', {}).catch((e) => toast(e.message, 'error')) },
+              t('settings.theme.folder')))),
         el('hr', { class: 'settings-sep' }),
         el('div', { class: 'form-row' }, el('label', {}, t('settings.game')),
           el('div', { class: 'inline' }, game, browse(game, t('settings.game'), 'jeu')),
@@ -948,10 +1032,14 @@ async function openSettings() {
           onclick: async () => {
             const langChanged = uiLang.value !== (UI.setting || '');
             const st2 = await busy(t('save.busy'), () => api('/settings', {
-              gameDir: game.value, mo2ModsDir: mo2.value, outputDir: out.value, lang: lang.value, uiLang: uiLang.value, recentMods: st.recentMods,
+              gameDir: game.value, mo2ModsDir: mo2.value, outputDir: out.value, lang: lang.value, uiLang: uiLang.value,
+              theme: theme.value, recentMods: st.recentMods,
             }));
             if (!st2) return;
             S.state = st2;
+            // theme enregistre : l'apercu devient le theme normal (rien a remettre en fermant)
+            S.themeRestore = null;
+            if (S.themeShown !== theme.value) showTheme(theme.value);
             closeModal();
             // dossier MO2, langue cible ou dossier de sortie ont pu changer : la liste est relue
             if (S.tab === 'modlist') mlLoad({});
@@ -1503,6 +1591,11 @@ function bind() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !$('modal').classList.contains('hidden')) closeModal();
+    if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 't') {
+      e.preventDefault();
+      resetTheme();
+      return;
+    }
     if (e.ctrlKey && e.key.toLowerCase() === 's') {
       e.preventDefault();
       if (S.state && S.state.project && S.tab === 'translate') save();
@@ -1533,6 +1626,8 @@ async function init() {
   document.body.classList.remove('i18n-loading');
   try {
     await refreshState();
+    // la page a deja charge le theme des reglages (/theme.css)
+    S.themeShown = S.state.settings.theme || '';
     if (S.state.settings.modlist) ML.prefs = S.state.settings.modlist;
     applyTab();
     if (S.state.project) await loadUnits();

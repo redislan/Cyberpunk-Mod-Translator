@@ -12,14 +12,6 @@ internal static class FileRules
         "EventProxy.lua", "json.lua", "dkjson.lua", "inspect.lua", "middleclass.lua", "lume.lua", "TweakDB.lua",
     };
 
-    private static readonly string[] OtherLanguages =
-    {
-        "german", "deutsch", "russian", "french", "francais", "spanish", "espanol", "mexican", "italian", "polish",
-        "portuguese", "brazilian", "japanese", "korean", "chinese", "arabic", "czech", "hungarian", "thai", "turkish",
-        "ukrainian",
-    };
-
-    private static readonly Regex LangCode = new(@"^(?<l>[a-z]{2})([-_][a-z]{2})?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex LocPackage = new(@"class\s+(?<c>\w+)\s+extends\s+ModLocalizationPackage", RegexOptions.Compiled);
 
     public static void Apply(string relativePath, string content, List<StringLiteral> literals)
@@ -35,46 +27,35 @@ internal static class FileRules
             return;
         }
 
-        // 2. Traductions deja fournies dans une autre langue (German.reds, de-de.json...) : on n'y touche pas
+        // 2. Traductions deja fournies dans une autre langue (German.reds, de-de.json, Localization/tr_TR.lua,
+        //    localization/ru-ru/onscreens.json...) : ce n'est pas du texte a traduire, on n'y touche pas
         var package = ext == ".reds" ? LocPackage.Match(content) : Match.Empty;
-        var langName = package.Success ? package.Groups["c"].Value : stem;
-        if ((package.Success || ext == ".json") && IsOtherLanguage(langName))
+        if ((package.Success && Languages.IsOtherLanguageName(package.Groups["c"].Value, loose: true)) ||
+            Languages.IsOtherLanguageFile(relativePath))
         {
             SetAll(literals, StringKind.Code);
             return;
         }
 
         // 3. Fichier de traduction anglais (localization.json, en-us.json) : les valeurs sont du texte
-        if (ext == ".json" && (IsEnglish(stem) || stem.Contains("locali", StringComparison.OrdinalIgnoreCase)))
+        if (ext == ".json" && (Languages.IsEnglishName(stem) || stem.Contains("locali", StringComparison.OrdinalIgnoreCase)))
         {
             foreach (var l in literals)
                 if (l.Kind == StringKind.Maybe) l.Kind = StringKind.Text;
         }
 
         // 4. Un mot repete dix fois ou plus dans le meme fichier : une valeur de base de donnees ("Ped", "Ped"...)
-        foreach (var group in literals.Where(l => l.Kind == StringKind.Maybe && !l.Value.Contains(' ')).GroupBy(l => l.Value))
-        {
-            if (literals.Count(l => l.Value == group.Key) < 10) continue;
-            foreach (var l in group) l.Kind = StringKind.Code;
-        }
+        // (compte fait une seule fois : recompter pour chaque mot bloquait l'analyse des gros fichiers)
+        var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var l in literals)
+            occurrences[l.Value] = occurrences.GetValueOrDefault(l.Value) + 1;
+        foreach (var l in literals)
+            if (l.Kind == StringKind.Maybe && !l.Value.Contains(' ') && occurrences[l.Value] >= 10)
+                l.Kind = StringKind.Code;
     }
 
     private static void SetAll(List<StringLiteral> literals, StringKind kind)
     {
         foreach (var l in literals) l.Kind = kind;
-    }
-
-    private static bool IsEnglish(string name)
-    {
-        var n = name.ToLowerInvariant();
-        return n is "english" or "en" or "en-us" or "en_us" or "en-gb" or "enus";
-    }
-
-    private static bool IsOtherLanguage(string name)
-    {
-        var n = name.ToLowerInvariant();
-        if (OtherLanguages.Any(n.Contains)) return true;
-        var m = LangCode.Match(n);
-        return m.Success && m.Groups["l"].Value != "en" && n is not ("id" or "ui" or "db" or "ok");
     }
 }

@@ -504,6 +504,9 @@ public sealed class ModlistService : IDisposable
             Check = u.Count(x => x.Status == UnitStatus.ToCheck),
             Done = u.Count(x => x.Status == UnitStatus.AlreadyTranslated),
         };
+        // Archive illisible : le mod reste signale en erreur (ses autres fichiers ont quand meme ete comptes)
+        if (project.FailedArchives.Count > 0)
+            result.Error = string.Join(" ; ", project.Notes.Select(n => n.ToString()).Take(3)).Replace(path + Path.DirectorySeparatorChar, "");
         var save = SaveFile(project.Mod.Name);
         if (File.Exists(save))
         {

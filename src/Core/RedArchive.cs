@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text;
 
 namespace CyberpunkModTranslator.Core;
@@ -72,6 +71,13 @@ public sealed class RedArchive : IDisposable
         try
         {
             ar.ReadStructure();
+        }
+        catch (EndOfStreamException)
+        {
+            // Fichier vide ou coupe : meme message clair que pour une archive abimee
+            var length = ar._stream.Length;
+            ar.Dispose();
+            throw new InvalidDataException(UiText.T("core.badArchive", System.IO.Path.GetFileName(path), UiText.T("core.archiveTooShort", length)));
         }
         catch
         {
@@ -190,7 +196,15 @@ public sealed class RedArchive : IDisposable
         lock (_stream)
         {
             _stream.Position = (long)seg.Offset;
-            _stream.ReadExactly(raw);
+            try
+            {
+                _stream.ReadExactly(raw);
+            }
+            catch (EndOfStreamException)
+            {
+                // Fichier raccourci pendant la lecture (copie en cours, disque...)
+                throw Bad($"segment {index} cut short");
+            }
         }
         if (seg.ZSize == seg.Size) return raw;
         if (raw.Length >= 8 && raw.AsSpan(0, 4).SequenceEqual(Kark))
@@ -206,8 +220,6 @@ public sealed class RedArchive : IDisposable
     public byte[] ReadMain(ArchiveEntry entry) => ReadSegment((int)entry.SegmentsStart);
 
     private InvalidDataException Bad(string detail) => new(UiText.T("core.badArchive", Path.GetFileName(FilePath), detail));
-
-    public static string ShortSha1(byte[] data) => Convert.ToHexString(SHA1.HashData(data))[..12].ToLowerInvariant();
 
     public void Dispose() => _stream.Dispose();
 }

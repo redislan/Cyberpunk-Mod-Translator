@@ -34,6 +34,8 @@ public sealed class Settings
     public string Lang { get; set; } = "fr-fr";
     /// <summary>Langue de l'interface : "" = automatique (langue de Windows), sinon en, fr, de...</summary>
     public string UiLang { get; set; } = "";
+    /// <summary>Theme de l'interface : "" = theme d'origine, sinon le nom d'un fichier du dossier themes (sans .css).</summary>
+    public string Theme { get; set; } = "";
     public List<string> RecentMods { get; set; } = new();
     /// <summary>Choix de l'onglet Modlist (profil, separateurs caches ou replies, filtres).</summary>
     public ModlistPrefs Modlist { get; set; } = new();
@@ -56,6 +58,11 @@ public sealed class AppState : IDisposable
     private TranslationProject? _project;
     private string? _projectPath;
     private int _restored;
+    /// <summary>Traductions de la sauvegarde qui n'ont pas pu etre replacees dans le mod ouvert, et copie gardee de cette sauvegarde.</summary>
+    private int _lost;
+    private string? _backup;
+    /// <summary>DLL remplacee (dossier du jeu change) mais encore utilisee par le mod ouvert : relachee a sa fermeture.</summary>
+    private readonly List<ICompressor> _retired = new();
     private readonly ModlistService _modlist;
 
     public Settings Settings { get; private set; }
@@ -73,10 +80,11 @@ public sealed class AppState : IDisposable
         if (string.IsNullOrEmpty(Settings.GameDir))
             Settings.GameDir = GameLocator.FindGameDirectories().FirstOrDefault() ?? "";
         Settings.Modlist ??= new ModlistPrefs();
+        Settings.Theme ??= "";
         UiText.Use(Settings.UiLang);
         _modlist = new ModlistService(forcedOodle);
         Log.Info($"Reglages : jeu = {Show(Settings.GameDir)}, mods MO2 = {Show(Settings.Mo2ModsDir)}, sortie = {Show(Settings.OutputDir)}, " +
-                 $"langue cible = {Settings.Lang}, interface = {UiText.Current} ({Show(Settings.UiLang, "auto")})");
+                 $"langue cible = {Settings.Lang}, interface = {UiText.Current} ({Show(Settings.UiLang, "auto")}), theme = {Show(Settings.Theme, "origine")}");
     }
 
     private static string Show(string? value, string empty = "(vide)") => string.IsNullOrWhiteSpace(value) ? empty : value;
@@ -90,6 +98,13 @@ public sealed class AppState : IDisposable
         LastPing = DateTime.UtcNow;
         EverPinged = true;
         ByeReceived = false;
+    }
+
+    /// <summary>Le PC sort de veille : la page n'a pas pu donner de nouvelles pendant ce temps, on repart de maintenant.</summary>
+    public void Resumed()
+    {
+        LastPing = DateTime.UtcNow;
+        if (ByeReceived) ByeAt = DateTime.UtcNow;
     }
 
     public void Bye()
@@ -165,12 +180,16 @@ public sealed class AppState : IDisposable
             Settings.OutputDir = string.IsNullOrWhiteSpace(s.OutputDir) ? new Settings().OutputDir : s.OutputDir.Trim();
             Settings.Lang = string.IsNullOrWhiteSpace(s.Lang) ? "fr-fr" : s.Lang.Trim();
             Settings.UiLang = (s.UiLang ?? "").Trim().ToLowerInvariant();
+            Settings.Theme = (s.Theme ?? "").Trim();
             UiText.Use(Settings.UiLang);
             Log.Info($"Reglages modifies : jeu = {Show(Settings.GameDir)}, mods MO2 = {Show(Settings.Mo2ModsDir)}, sortie = {Show(Settings.OutputDir)}, " +
-                     $"langue cible = {Settings.Lang}, interface = {UiText.Current} ({Show(Settings.UiLang, "auto")})");
-            if (gameChanged && _forcedOodle == null)
+                     $"langue cible = {Settings.Lang}, interface = {UiText.Current} ({Show(Settings.UiLang, "auto")}), theme = {Show(Settings.Theme, "origine")}");
+            if (gameChanged && _forcedOodle == null && _compressor != null)
             {
-                _compressor?.Dispose();
+                // Le mod ouvert lit encore ses archives avec cette DLL : la relacher maintenant ferait planter la
+                // prochaine fabrication. Elle attend la fermeture du mod.
+                if (_project != null) _retired.Add(_compressor);
+                else _compressor.Dispose();
                 _compressor = null;
             }
             SaveSettings();
@@ -236,12 +255,46 @@ public sealed class AppState : IDisposable
             notes = _project.Notes.Select(n => n.ToString()).ToList(),
             archivesWithoutText = _project.ArchivesWithoutText,
             restored = _restored,
+            lost = _lost,
+            backup = _backup,
             saveFile = ProjectFile(),
         };
     }
 
-    private string ProjectFile() =>
-        Path.Combine(AppPaths.Projects, TranslationProject.SafeName(_project!.Mod.Name) + ".tsv");
+    private string ProjectFile() => ProjectFileFor(_project!);
+
+    private static string ProjectFileFor(TranslationProject project) =>
+        Path.Combine(AppPaths.Projects, TranslationProject.SafeName(project.Mod.Name) + ".tsv");
+
+    /// <summary>
+    /// Copie datee d'une sauvegarde avant qu'elle soit reecrite sans certaines de ses lignes (mod mis a jour,
+    /// sauvegarde illisible). Les cinq dernieres copies d'un mod sont gardees. Renvoie le nom de la copie.
+    /// </summary>
+    private static string? BackupSave(string saved)
+    {
+        try
+        {
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+            var backup = $"{saved}.{stamp}.bak";
+            File.Copy(saved, backup, true);
+            var old = Directory.GetFiles(Path.GetDirectoryName(saved)!, Path.GetFileName(saved) + ".*.bak")
+                .OrderByDescending(f => f, StringComparer.Ordinal).Skip(5);
+            foreach (var f in old) File.Delete(f);
+            Log.Info("Copie de la sauvegarde gardee : " + backup);
+            return Path.GetFileName(backup);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Copie de la sauvegarde impossible ({saved})", ex);
+            return null;
+        }
+    }
+
+    private void ReleaseRetired()
+    {
+        foreach (var c in _retired) c.Dispose();
+        _retired.Clear();
+    }
 
     /// <summary>Langue de l'interface : textes pour la page et langues disponibles pour les Parametres.</summary>
     public object GetLanguage()
@@ -280,18 +333,38 @@ public sealed class AppState : IDisposable
                 project.Dispose();
                 throw new InvalidOperationException(UiText.T("core.noText", notes).Trim());
             }
-            _project?.Dispose();
-            _project = project;
-            _projectPath = path.Trim();
-            _restored = 0;
-
-            // Reprise automatique du travail deja fait sur ce mod
-            var saved = ProjectFile();
+            // Reprise automatique du travail deja fait sur ce mod. Elle est faite AVANT de remplacer le mod ouvert :
+            // si elle echoue, la page et le programme restent sur le meme mod.
+            var restored = 0;
+            var lost = 0;
+            string? backup = null;
+            var saved = ProjectFileFor(project);
             if (File.Exists(saved))
             {
-                _project.ImportTsv(saved);
-                _restored = _project.Units.Count(u => u.HasChange);
+                try
+                {
+                    var (_, warnings) = project.ImportTsv(saved);
+                    restored = project.Units.Count(u => u.HasChange);
+                    lost = warnings.Count;
+                    // Des lignes traduites n'ont plus leur place (mod mis a jour) : la sauvegarde va etre reecrite
+                    // sans elles, on en garde donc une copie.
+                    if (lost > 0) backup = BackupSave(saved);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Sauvegarde illisible, mod ouvert sans elle : {saved}", ex);
+                    backup = BackupSave(saved);
+                    project.Notes.Add(new LocText("open.saveUnreadable", backup ?? Path.GetFileName(saved)));
+                }
             }
+
+            _project?.Dispose();
+            ReleaseRetired();
+            _project = project;
+            _projectPath = path.Trim();
+            _restored = restored;
+            _lost = lost;
+            _backup = backup;
 
             Log.Info($"Mod ouvert : {_project.Mod.Name} ({_project.Units.Count} chaines, {_restored} traduction(s) reprises de la sauvegarde)");
             Settings.RecentMods.RemoveAll(p => string.Equals(p, _projectPath, StringComparison.OrdinalIgnoreCase));
@@ -310,6 +383,7 @@ public sealed class AppState : IDisposable
             _project?.Dispose();
             _project = null;
             _projectPath = null;
+            ReleaseRetired();
             return GetState();
         }
     }
@@ -651,6 +725,7 @@ public sealed class AppState : IDisposable
         lock (_lock)
         {
             _project?.Dispose();
+            ReleaseRetired();
             _compressor?.Dispose();
         }
     }

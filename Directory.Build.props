@@ -1,0 +1,6 @@
+<Project>
+  <!-- Numero de version de tout le programme (appli, ligne de commande, moteur) : a changer ici seulement -->
+  <PropertyGroup>
+    <Version>0.8.1</Version>
+  </PropertyGroup>
+</Project>
