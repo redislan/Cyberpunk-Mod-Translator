@@ -26,6 +26,7 @@ const S = {
   statuses: new Set(['todo', 'check', 'done']),
   search: '',
   onlyEmpty: false,
+  onlyTags: false, // seulement les lignes dont les balises different de l'anglais
   page: 0,
   selected: null,
   pending: new Map(),
@@ -408,11 +409,40 @@ function applyFilters() {
     (S.fileFilter === null || fileKey(u) === S.fileFilter) &&
     S.statuses.has(u.status) &&
     (!S.onlyEmpty || !isTranslated(u)) &&
+    (!S.onlyTags || tagProblem(u)) &&
     (!q || u.en.toLowerCase().includes(q) || u.fr.toLowerCase().includes(q) || u.key.toLowerCase().includes(q)));
   const pages = Math.max(1, Math.ceil(S.filtered.length / PAGE_SIZE));
   if (S.page >= pages) S.page = pages - 1;
   renderChips();
+  renderTagFilter();
   renderTable();
+}
+
+/** Case « Balises » : nombre de lignes (du fichier choisi) dont les balises different de l'anglais. */
+function renderTagFilter() {
+  const count = S.units.filter((u) => (S.fileFilter === null || fileKey(u) === S.fileFilter) && tagProblem(u)).length;
+  $('tagFilterLabel').textContent = t('filter.tagIssues', count);
+  $('tagFilterBox').classList.toggle('has-issues', count > 0);
+  $('tagFilterBox').classList.toggle('no-issues', count === 0 && !S.onlyTags);
+}
+
+/**
+ * N'affiche que les lignes aux balises differentes de l'anglais, sur tout le mod (bouton des fenetres de fabrication).
+ * Les autres filtres sont retires ; les statuts de ces lignes sont ajoutes aux statuts affiches.
+ */
+function showTagIssues() {
+  closeModal();
+  S.fileFilter = null;
+  S.search = '';
+  $('search').value = '';
+  S.onlyEmpty = false;
+  $('onlyEmpty').checked = false;
+  for (const u of S.units) if (tagProblem(u)) S.statuses.add(u.status);
+  S.onlyTags = true;
+  $('onlyTagIssues').checked = true;
+  S.page = 0;
+  renderFiles();
+  applyFilters();
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -466,7 +496,8 @@ function renderTable() {
 
 function rowEl(u) {
   const warn = el('div', { class: 'warnmsg' });
-  const ta = el('textarea', { rows: 1, spellcheck: 'true', lang: bcp47(targetLang()), 'data-id': u.id, value: u.fr });
+  // dir=auto : l'arabe s'ecrit de droite a gauche, le sens suit le texte tape
+  const ta = el('textarea', { rows: 1, spellcheck: 'true', lang: bcp47(targetLang()), dir: 'auto', 'data-id': u.id, value: u.fr });
   const badgeBox = el('div', {}, statusBadge(u));
   const row = el('div', { class: `row ${S.selected === u.id ? 'selected' : ''}`, 'data-id': u.id },
     el('div', { class: 'num' }, u.id + 1),
@@ -537,6 +568,7 @@ function renderProgressSoon() {
   progressTimer = setTimeout(() => {
     renderProgress();
     renderFilesCounts();
+    renderTagFilter();
   }, 400);
 }
 
@@ -870,13 +902,17 @@ async function importTranslation() {
   toast(t('importTrad.done', r.count), r.count ? 'ok' : '');
 }
 
-async function exportTsv() {
+/** shownOnly : seulement les lignes que les filtres affichent (statuts, fichier, recherche, non traduites, balises). */
+async function exportTsv(shownOnly) {
+  if (shownOnly && S.filtered.length === 0) return;
   await flush();
-  const r = await busy(t('exportTsv.busy'), () => api('/export-tsv', { path: S.state.settings.outputDir }));
+  const body = { path: S.state.settings.outputDir };
+  if (shownOnly) body.ids = S.filtered.map((u) => u.id);
+  const r = await busy(t('exportTsv.busy'), () => api('/export-tsv', body));
   if (!r) return;
   showModal(t('exportTsv.title'),
     el('div', {},
-      el('p', {}, t('exportTsv.text')),
+      el('p', {}, r.filtered ? t('exportTsv.textShown', r.count) : t('exportTsv.text')),
       el('div', { class: 'mono', style: 'padding:8px;background:var(--bg-3);border-radius:6px;word-break:break-all' }, r.file)),
     [el('button', { class: 'btn', onclick: () => api('/reveal', { path: r.file }) }, t('btn.openFolder')),
       el('button', { class: 'btn primary', onclick: closeModal }, t('btn.ok'))]);
@@ -1071,7 +1107,8 @@ async function buildTranslation() {
   const render = () => showModal(t('btn.build'),
     el('div', {},
       el('p', {}, t('build.count', changed),
-        warns ? el('span', { style: 'color:var(--warn)' }, t('build.tagWarn', warns)) : null),
+        warns ? el('span', { style: 'color:var(--warn)' }, t('build.tagWarn', warns)) : null,
+        warns ? el('button', { class: 'btn small', style: 'margin-left:8px', onclick: showTagIssues }, t('build.showTagIssues')) : null),
       el('div', { class: 'form-row' }, el('label', {}, t('build.name')), name),
       el('div', { class: 'form-row' }, el('label', {}, t('build.output')), el('div', { class: 'inline' }, out, browseBtn))),
     [el('button', { class: 'btn', onclick: closeModal }, t('btn.cancel')),
@@ -1086,6 +1123,7 @@ async function buildTranslation() {
     const r = await busy(t('build.busy'), () => api('/build', { path: out.value, name: name.value }));
     if (!r) return;
     await refreshState();
+    const tagIssues = S.units.filter((u) => tagProblem(u)).length;
     showModal(t('build.doneTitle'),
       el('div', {},
         el('div', { class: 'ok-big' }, t('build.done', r.changed)),
@@ -1100,8 +1138,10 @@ async function buildTranslation() {
           el('ul', { class: 'result-list' }, ...r.infos.slice(0, 40).map((w) => el('li', {}, w)))) : null,
         r.warnings.length ? el('div', {},
           el('p', { style: 'margin-top:14px;color:var(--warn)' }, t('build.warnings')),
-          el('ul', { class: 'result-list warn-list' }, ...r.warnings.slice(0, 40).map((w) => el('li', {}, w)))) : null),
-      [el('button', { class: 'btn', onclick: () => api('/reveal', { path: r.zip }) }, t('btn.openFolder')),
+          el('ul', { class: 'result-list warn-list' }, ...r.warnings.slice(0, 40).map((w) => el('li', {}, w))),
+          r.warnings.length > 40 ? el('p', { class: 'help' }, t('build.moreWarnings', r.warnings.length - 40)) : null) : null),
+      [tagIssues ? el('button', { class: 'btn', onclick: showTagIssues }, t('build.showTagIssuesCount', tagIssues)) : null,
+        el('button', { class: 'btn', onclick: () => api('/reveal', { path: r.zip }) }, t('btn.openFolder')),
         el('button', { class: 'btn primary', onclick: closeModal }, t('btn.ok'))]);
   }
   render();
@@ -1524,6 +1564,10 @@ function bind() {
   $('btnBuild').addEventListener('click', buildTranslation);
   $('btnTsv').addEventListener('click', (e) => {
     e.stopPropagation();
+    // nombre de lignes que les filtres affichent en ce moment
+    const shown = $('btnExportTsvShown');
+    shown.textContent = t('btn.exportTsvShown', S.filtered.length);
+    shown.disabled = S.filtered.length === 0;
     $('tsvMenu').classList.toggle('hidden');
   });
   document.addEventListener('click', () => {
@@ -1571,7 +1615,8 @@ function bind() {
       mlRender();
     }, 150);
   });
-  $('btnExportTsv').addEventListener('click', exportTsv);
+  $('btnExportTsv').addEventListener('click', () => exportTsv(false));
+  $('btnExportTsvShown').addEventListener('click', () => exportTsv(true));
   $('btnImportTsv').addEventListener('click', importTsv);
 
   let searchTimer = null;
@@ -1585,6 +1630,11 @@ function bind() {
   });
   $('onlyEmpty').addEventListener('change', () => {
     S.onlyEmpty = $('onlyEmpty').checked;
+    S.page = 0;
+    applyFilters();
+  });
+  $('onlyTagIssues').addEventListener('change', () => {
+    S.onlyTags = $('onlyTagIssues').checked;
     S.page = 0;
     applyFilters();
   });

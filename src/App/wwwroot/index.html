@@ -32,6 +32,8 @@
         <button class="btn" id="btnTsv" data-i18n="btn.tsv">TSV ▾</button>
         <div class="menu-list hidden" id="tsvMenu">
           <button id="btnExportTsv" data-i18n="btn.exportTsv">Export for Excel</button>
+          <!-- Seulement les lignes que les filtres affichent (texte et nombre mis a jour a l'ouverture du menu) -->
+          <button id="btnExportTsvShown" data-i18n-title="btn.exportTsvShown.tip">Export the lines shown</button>
           <button id="btnImportTsv" data-i18n="btn.importTsv">Import a TSV</button>
         </div>
       </div>
@@ -73,6 +75,8 @@
         <input type="search" id="search" data-i18n-placeholder="search.placeholder">
         <div class="chips" id="chips"></div>
         <label class="check"><input type="checkbox" id="onlyEmpty"> <span data-i18n="filter.onlyEmpty">Untranslated only</span></label>
+        <!-- Lignes traduites dont les balises ({...}, <...>, %d...) different de l'anglais ; le nombre est mis a jour par la page -->
+        <label class="check" id="tagFilterBox" data-i18n-title="filter.tagIssues.tip"><input type="checkbox" id="onlyTagIssues"> <span id="tagFilterLabel">Tag warnings</span></label>
       </div>
       <div class="table-head">
         <div>#</div><div data-i18n="table.status">Status</div><div data-i18n="table.source">English</div><div id="targetHead"></div>

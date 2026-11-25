@@ -250,10 +250,11 @@ public sealed class TranslationProject : IDisposable
         (byte[] Bytes, LocalizationFile? Loc)? Find(string path) =>
             ar.ByHash.TryGetValue(ResourcePath.Resolve(path), out var e) ? Load(e) : null;
 
-        // Fichiers de textes presents dans l'archive (par le chemin, ou par le contenu si le nom est inconnu)
+        // Fichiers de textes presents dans l'archive (par le contenu : le chemin, quand il est connu, doit juste finir
+        // par .json). Un fichier declare dans un .xl peut porter n'importe quel nom, pas forcement "localization".
         var locEntries = ar.Files
             .Where(e => e.Path != null
-                ? e.Path.Contains("localization", StringComparison.OrdinalIgnoreCase) && e.Path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                ? e.Path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
                 : e.Size < 8 * 1024 * 1024)
             .Where(e => Load(e)?.Loc != null)
             .ToList();
@@ -261,49 +262,62 @@ public sealed class TranslationProject : IDisposable
         var pairs = new List<(string Src, string Tgt, LocText Reason)>();
         var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // 1) Ce que declare le .xl d'ArchiveXL
-        var xl = FindXl(relative, path => ar.ByHash.ContainsKey(ResourcePath.Resolve(path)));
-        if (xl != null)
+        void AddPair(string src, string tgt, LocText reason)
+        {
+            var srcFile = Find(src);
+            if (srcFile != null && srcFile.Value.Loc == null &&
+                LocalizationFile.TryReadSubtitleMap(srcFile.Value.Bytes) is { } srcSubs)
+            {
+                // Le .xl pointe vers une carte de sous-titres : on suit ses liens vers les vrais fichiers
+                var tgtFile = Find(tgt);
+                var tgtSubs = tgtFile != null ? LocalizationFile.TryReadSubtitleMap(tgtFile.Value.Bytes) : null;
+                for (var k = 0; k < srcSubs.Count; k++)
+                {
+                    var t = tgtSubs != null && k < tgtSubs.Count ? tgtSubs[k] : srcSubs[k];
+                    pairs.Add((srcSubs[k], t, reason.Then(new LocText("reason.viaSubtitleMap"))));
+                    covered.Add(ResourcePath.Sanitize(srcSubs[k]));
+                    covered.Add(ResourcePath.Sanitize(t));
+                }
+                return;
+            }
+            pairs.Add((src, tgt, reason));
+        }
+
+        // 1) Ce que declarent les .xl d'ArchiveXL. ArchiveXL les lit TOUS (chaque fichier .xl a ses propres langues) :
+        //    un mod peut repartir ses fichiers de textes entre plusieurs .xl.
+        foreach (var xl in FindXls(relative, path => ar.ByHash.ContainsKey(ResourcePath.Resolve(path))))
         {
             foreach (var section in new[] { "onscreens", "subtitles" })
             {
                 var langs = xl.Get(section).Where(l => l.Paths.Count > 0).ToList();
                 if (langs.Count == 0) continue;
-                var srcLang = langs.Any(l => l.Lang == "en-us") ? "en-us" : langs[0].Lang;
+                // Langue de secours d'ArchiveXL : la premiere declaree dans le fichier
+                var fallback = langs[0];
+                var srcLang = langs.Any(l => l.Lang == "en-us") ? "en-us" : fallback.Lang;
                 var srcPaths = langs.First(l => l.Lang == srcLang).Paths;
                 var tgt = langs.FirstOrDefault(l => l.Lang == TargetLang);
-                List<string> tgtPaths;
-                LocText reason;
                 if (tgt.Paths != null)
                 {
-                    tgtPaths = tgt.Paths;
-                    reason = new LocText("reason.xlDeclares", TargetLang);
+                    var reason = new LocText("reason.xlDeclares", TargetLang);
+                    for (var i = 0; i < tgt.Paths.Count; i++)
+                        AddPair(srcPaths[Math.Min(i, srcPaths.Count - 1)], tgt.Paths[i], reason);
+
+                    // ArchiveXL complete la langue cible avec la langue de secours (lignes absentes). Quand la langue cible
+                    // a moins de fichiers, les textes des fichiers de secours restants s'affichent donc tels quels :
+                    // on les traduit en remplacant ces fichiers.
+                    if (fallback.Lang != TargetLang)
+                    {
+                        var partial = new LocText("reason.xlPartial", TargetLang, tgt.Paths.Count, fallback.Lang);
+                        for (var i = tgt.Paths.Count; i < fallback.Paths.Count; i++)
+                            AddPair(srcPaths[Math.Min(i, srcPaths.Count - 1)], fallback.Paths[i], partial);
+                    }
                 }
                 else
                 {
-                    tgtPaths = langs[0].Paths;
-                    reason = new LocText("reason.xlFallback", TargetLang, langs[0].Lang);
-                }
-                for (var i = 0; i < tgtPaths.Count; i++)
-                {
-                    var src = srcPaths[Math.Min(i, srcPaths.Count - 1)];
-                    var srcFile = Find(src);
-                    if (srcFile != null && srcFile.Value.Loc == null &&
-                        LocalizationFile.TryReadSubtitleMap(srcFile.Value.Bytes) is { } srcSubs)
-                    {
-                        // Le .xl pointe vers une carte de sous-titres : on suit ses liens vers les vrais fichiers
-                        var tgtFile = Find(tgtPaths[i]);
-                        var tgtSubs = tgtFile != null ? LocalizationFile.TryReadSubtitleMap(tgtFile.Value.Bytes) : null;
-                        for (var k = 0; k < srcSubs.Count; k++)
-                        {
-                            var t = tgtSubs != null && k < tgtSubs.Count ? tgtSubs[k] : srcSubs[k];
-                            pairs.Add((srcSubs[k], t, reason.Then(new LocText("reason.viaSubtitleMap"))));
-                            covered.Add(ResourcePath.Sanitize(srcSubs[k]));
-                            covered.Add(ResourcePath.Sanitize(t));
-                        }
-                        continue;
-                    }
-                    pairs.Add((src, tgtPaths[i], reason));
+                    // Langue cible absente : ArchiveXL affiche la langue de secours, ce sont ses fichiers qu'on remplace
+                    var reason = new LocText("reason.xlFallback", TargetLang, fallback.Lang);
+                    for (var i = 0; i < fallback.Paths.Count; i++)
+                        AddPair(srcPaths[Math.Min(i, srcPaths.Count - 1)], fallback.Paths[i], reason);
                 }
                 foreach (var l in langs)
                     foreach (var p in l.Paths)
@@ -346,6 +360,12 @@ public sealed class TranslationProject : IDisposable
             var src = Find(srcPath);
             if (src?.Loc == null)
             {
+                // Un .xl peut declarer les fichiers de plusieurs archives du mod : celui-ci sera lu avec la sienne
+                if (src == null && InOtherArchive(relative, srcPath))
+                {
+                    Log.Debug($"{archiveName} : {srcPath} est dans une autre archive du mod, lu avec elle");
+                    continue;
+                }
                 AddNote(new LocText("scan.sourceMissing", archiveName, srcPath));
                 continue;
             }
@@ -399,7 +419,8 @@ public sealed class TranslationProject : IDisposable
                         Context = entry.SecondaryKey ?? "",
                         Source = text,
                         Current = current,
-                        Status = !samePath && current != text ? UnitStatus.AlreadyTranslated : UnitStatus.ToTranslate,
+                        Status = IsCommentEntry(entry) ? UnitStatus.Code
+                            : !samePath && current != text ? UnitStatus.AlreadyTranslated : UnitStatus.ToTranslate,
                     });
                 }
             }
@@ -412,38 +433,103 @@ public sealed class TranslationProject : IDisposable
     }
 
     /// <summary>
-    /// Le .xl d'ArchiveXL qui declare les textes de cette archive : "archive.xl" s'il existe, sinon un autre .xl du meme
-    /// dossier dont au moins un chemin est dans l'archive (ArchiveXL charge tous les .xl, quel que soit leur nom).
+    /// Ligne de commentaire d'un fichier de textes (cle secondaire qui commence par "-" ou "=", par exemple
+    /// "----- Armes -----") : ArchiveXL ne la charge pas, elle n'apparait jamais en jeu.
     /// </summary>
-    private XlLocalization? FindXl(string archiveRelative, Func<string, bool> inArchive)
+    private static bool IsCommentEntry(LocEntry entry) =>
+        entry.SecondaryKey is { Length: > 0 } k && (k[0] == '-' || k[0] == '=');
+
+    /// <summary>Hashs des fichiers de chaque archive du mod (lus a la demande, une fois).</summary>
+    private Dictionary<string, HashSet<ulong>>? _archiveHashes;
+
+    /// <summary>Le fichier est-il dans une autre archive du mod que celle-ci ?</summary>
+    private bool InOtherArchive(string archiveRelative, string path)
     {
-        XlLocalization? Load(string relative)
+        if (_archiveHashes == null)
         {
-            try
+            _archiveHashes = new Dictionary<string, HashSet<ulong>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var a in Mod.Archives)
             {
-                return XlLocalization.Load(Mod.FullPath(relative));
-            }
-            catch (Exception ex)
-            {
-                AddNote(new LocText("scan.xlFailed", relative, ex.Message));
-                return null;
+                try
+                {
+                    using var ar = RedArchive.Open(Mod.FullPath(a), _compressor);
+                    _archiveHashes[a] = ar.ByHash.Keys.ToHashSet();
+                }
+                catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+                {
+                    // Deja signalee par l'analyse de cette archive
+                    Log.Debug($"{a} illisible pour la recherche des fichiers partages ({ex.Message})");
+                }
             }
         }
+        var hash = ResourcePath.Resolve(path);
+        return _archiveHashes.Any(kv => !string.Equals(kv.Key, archiveRelative, StringComparison.OrdinalIgnoreCase) && kv.Value.Contains(hash));
+    }
 
-        var files = new HashSet<string>(Mod.Files, StringComparer.OrdinalIgnoreCase);
-        if (files.Contains(archiveRelative + ".xl")) return Load(archiveRelative + ".xl");
+    /// <summary>.xl deja lus pendant l'analyse (un .xl peut servir a plusieurs archives) ; null = illisible ou sans textes.</summary>
+    private readonly Dictionary<string, XlLocalization?> _xlCache = new(StringComparer.OrdinalIgnoreCase);
 
-        var dir = Path.GetDirectoryName(archiveRelative) ?? "";
-        foreach (var candidate in Mod.Files.Where(f => f.EndsWith(".xl", StringComparison.OrdinalIgnoreCase) &&
-                                                       string.Equals(Path.GetDirectoryName(f) ?? "", dir, StringComparison.OrdinalIgnoreCase) &&
-                                                       !files.Contains(f[..^3]))) // "autre.archive.xl" appartient a autre.archive
+    private XlLocalization? LoadXl(string relative)
+    {
+        if (_xlCache.TryGetValue(relative, out var cached)) return cached;
+        XlLocalization? xl;
+        try
         {
-            var xl = Load(candidate);
+            xl = XlLocalization.Load(Mod.FullPath(relative));
+        }
+        catch (Exception ex)
+        {
+            AddNote(new LocText("scan.xlFailed", relative, ex.Message));
+            xl = null;
+        }
+        return _xlCache[relative] = xl;
+    }
+
+    /// <summary>
+    /// Partie du chemin avant les dossiers du jeu ("Option A/" dans "Option A/archive/pc/mod/x.archive", "" pour un mod
+    /// bien range) : un .xl d'une autre option du mod ne concerne pas cette archive.
+    /// </summary>
+    private static string InstallRoot(string relative)
+    {
+        var norm = relative.Replace('\\', '/');
+        var m = Regex.Match(norm, @"(^|/)(archive/pc/mod|mods/[^/]+/archives)(/|$)", RegexOptions.IgnoreCase);
+        if (m.Success) return norm[..m.Index] + (m.Groups[1].Length > 0 ? "/" : "");
+        var dir = Path.GetDirectoryName(norm)?.Replace('\\', '/') ?? "";
+        return dir.Length == 0 ? "" : dir + "/";
+    }
+
+    /// <summary>
+    /// Les .xl d'ArchiveXL qui declarent des textes de cette archive. ArchiveXL charge TOUS les .xl de archive/pc/mod
+    /// (sous-dossiers compris), quel que soit leur nom ; chaque .xl a ses propres langues. Sont retenus :
+    /// "archive.xl" s'il existe, puis tout autre .xl de la meme installation dont au moins un chemin est dans l'archive
+    /// (d'abord ceux du meme dossier). "autre.archive.xl" appartient a autre.archive, s'il existe.
+    /// </summary>
+    private List<XlLocalization> FindXls(string archiveRelative, Func<string, bool> inArchive)
+    {
+        var result = new List<XlLocalization>();
+        var files = new HashSet<string>(Mod.Files, StringComparer.OrdinalIgnoreCase);
+        var own = archiveRelative + ".xl";
+        if (files.Contains(own) && LoadXl(own) is { } ownXl) result.Add(ownXl);
+
+        var root = InstallRoot(archiveRelative);
+        var dir = Path.GetDirectoryName(archiveRelative) ?? "";
+        var candidates = Mod.Files
+            .Where(f => f.EndsWith(".xl", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(f, own, StringComparison.OrdinalIgnoreCase) &&
+                        !files.Contains(f[..^3]) &&
+                        f.Replace('\\', '/').StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(f => string.Equals(Path.GetDirectoryName(f) ?? "", dir, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(f => f, StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in candidates)
+        {
+            var xl = LoadXl(candidate);
             if (xl == null) continue;
             var declared = xl.Sections.Values.SelectMany(s => s).SelectMany(l => l.Paths);
-            if (declared.Any(inArchive)) return xl;
+            if (declared.Any(inArchive)) result.Add(xl);
         }
-        return null;
+        if (result.Count > 1)
+            Log.Write(_quiet ? LogSeverity.Debug : LogSeverity.Info, $"{Path.GetFileName(archiveRelative)} : {result.Count} fichiers .xl lus", null);
+        return result;
     }
 
     // -----------------------------------------------------------------------------------------
@@ -669,13 +755,21 @@ public sealed class TranslationProject : IDisposable
                v.Equals(UiText.T("tsv.no"), StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>Exporte les lignes. Par defaut sans les chaines classees "code".</summary>
-    public void ExportTsv(string path, bool includeCode = false)
+    /// <summary>
+    /// Exporte les lignes. Par defaut sans les chaines classees "code".
+    /// <paramref name="only"/> : seulement ces lignes (celles que les filtres de l'appli affichent), code compris.
+    /// Un TSV partiel se reimporte sans toucher aux autres lignes.
+    /// </summary>
+    public int ExportTsv(string path, bool includeCode = false, IReadOnlySet<TextUnit>? only = null)
     {
         var rows = new List<string[]> { TsvHeader() };
         foreach (var u in Units)
         {
-            if (u.Status == UnitStatus.Code && !includeCode && u.Translation == null) continue;
+            if (only != null)
+            {
+                if (!only.Contains(u)) continue;
+            }
+            else if (u.Status == UnitStatus.Code && !includeCode && u.Translation == null) continue;
             rows.Add(new[]
             {
                 u.SourceName, Tsv.ProtectNumber(u.FilePath), Tsv.ProtectNumber(u.Key), u.Field, StatusLabel(u.Status),
@@ -688,6 +782,7 @@ public sealed class TranslationProject : IDisposable
             });
         }
         Tsv.Write(path, rows);
+        return rows.Count - 1;
     }
 
     /// <summary>Resultat de la lecture d'un TSV : quelle ligne du fichier va sur quelle ligne du mod.</summary>

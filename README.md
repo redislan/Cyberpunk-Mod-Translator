@@ -1,4 +1,4 @@
-# Cyberpunk Mod Translator — v0.8.1
+# Cyberpunk Mod Translator — v0.9.0
 
 *[Version française](README.fr.md)*
 
@@ -13,7 +13,20 @@ Translate Cyberpunk 2077 mods into your language without WolvenKit. Open a mod, 
 
 Made by Sterben. MIT license.
 
-## New in v0.8.1
+## New in v0.9.0
+
+**Mods whose texts were only partly loaded**
+- A mod can spread its text files over several ArchiveXL `.xl` files (one per feature, in subfolders…). ArchiveXL reads them all; the tool used to read only one per archive, so only part of the texts showed up (for example 1 JSON file out of 8). All the `.xl` files of the mod are now read, like ArchiveXL does.
+- Text files whose path doesn't contain `localization` are found too, and `.xl` lists written on several lines (`en-us: [` … `]`) are read.
+- When a mod's `.xl` declares fewer files in your language than in English, ArchiveXL shows the missing texts from its fallback language: those files are now offered for translation too.
+- Comment lines of text files (key starting with `---` or `===`) are sorted as code: ArchiveXL never loads them.
+
+**TSV and tags**
+- **TSV ▾ → Export the lines shown**: only exports what the filters show (status, file, search, "Untranslated only", tags). Uncheck "To check" and "Already translated" to get only the lines to translate. Importing that file only changes those lines.
+- **Tag warnings** filter: shows only the translated lines whose tags (`{int_0}`, `<Rich …>`, `%d`, `\n`…) differ from the English, with their count. Handy after an AI translation. The build window has a **Show them** button that turns it on.
+- The translation box follows the direction of the text, so right-to-left languages (Arabic) display properly.
+
+## v0.8.1
 
 A fix release, after a full review of the code.
 
@@ -65,12 +78,12 @@ The rest of the interface:
 
 - **Browse**: everywhere, it's the real Windows "Open" window, with the MO2 "mods" folder, the game folder and the output folder added as shortcuts on the left. Windows remembers the last folder for each use. If that window can't open, a built-in browser takes over (also available from the "Built-in browser" link).
 - **Files** (left): filter by file, with the progress of each one.
-- **Filters**: by status (To translate, To check, Already translated, Code), "Untranslated only", search in the English and the translation.
+- **Filters**: by status (To translate, To check, Already translated, Code), "Untranslated only", "Tag warnings" (translated lines whose tags differ from the English), search in the English and the translation.
 - **Details** (right): where the line comes from (archive, file, key, code line) and the tags to keep. "Copy the English" and "Restore the original" are there too.
 - **⇄ linked to code**: this text is also used as an identifier in the mod's code (see [Texts that are also identifiers](#texts-that-are-also-identifiers)). Its translation is copied automatically where the code compares it. The details show where, with a box to turn it off.
 - **Shortcuts**: `Ctrl+Enter` or `Alt+↓` for the next line, `Alt+↑` for the previous one, `Ctrl+S` to save, `Ctrl+F` to search.
 - **Reuse a translation**: picks up the texts of an existing translation (folder or zip), for example to update a translation after a new version of the mod.
-- **TSV**: export and import to work in Excel.
+- **TSV**: export and import to work in Excel or with an AI. "Export all lines" or "Export the lines shown" (only what the filters show). Importing a partial TSV leaves the other lines alone.
 - **Settings**: interface language, theme, game folder (for the compression DLL), MO2 "mods" folder (also read by the Modlist tab), output folder, target language.
 - **Data**: settings and saves are in `%AppData%\CyberpunkModTranslator` (`reglages.json`, `projets\*.tsv`, `modlist-cache.json`), with one log per session in `logs\` (the last 10 are kept). Interface languages and themes are next to the exe, in `lang\` and `themes\`.
 
@@ -183,7 +196,8 @@ Don't edit the `english` column: on import, a line whose English no longer match
 
 ## How the program picks the file to write (archives)
 
-1. If the `.xl` declares a file for the target language (`fr-fr`, `de-de`…), that's the one replaced. That's the case for Night City Interactions.
+0. Like ArchiveXL, the program reads **every** `.xl` file of the mod (subfolders included) that declares a file of the archive. Each `.xl` has its own languages. An `.xl` of another option folder of the mod is not used.
+1. If the `.xl` declares a file for the target language (`fr-fr`, `de-de`…), that's the one replaced. That's the case for Night City Interactions. If it declares fewer target-language files than fallback-language files, the remaining fallback files are replaced too: ArchiveXL shows them for the missing texts.
 2. If the `.xl` doesn't declare one, the program replaces ArchiveXL's fallback language, that is the first one declared.
 3. Without a `.xl`: if the archive holds a target-language version, it's replaced; otherwise the English file is replaced.
 4. Subtitle maps (`*_subtitles.json`) are followed to the real subtitle files.
@@ -245,6 +259,7 @@ If only the first one is translated, `Equals(category, "Background")` no longer 
 - **v0.8, themes**: the five themes were checked on screenshots of the translation table and of Settings. Preview, Cancel, Escape, Save and reload were tested in the browser, along with theme files whose names contain spaces or accents, images in a subfolder, and a saved theme deleted from the folder (the default theme comes back, with a line in the log). Paths that try to leave the `themes` folder are refused.
 - **v0.8.1, automatic tests** (`test.bat`): 28 tests build fake mods and check the result: full cycle, output-folder safety (nothing deleted that the tool didn't make), mod updates, duplicate names and keys, damaged archives, files without a path, zips with a wrapping folder, encodings, tricky strings, text/code sorting.
 - **v0.8.1, on 9 open-source mods from GitHub** (AMM, CyberScript, Equipment-EX, Let There Be Flight, djkovrik's mods…, about 500,000 strings): every string whose sorting changed was compared before/after, and all 331 plain files were rebuilt with a translation full of quotes and accents on every line, then read back.
+- **v0.9.0, automatic tests**: 36 tests. New: several `.xl` files for one archive (the reported case: only 1 JSON file out of 8 was loaded), `.xl` lists on several lines, text files without `localization` in their path, partial target language in the `.xl`, one `.xl` for two archives, option folders, comment lines, partial TSV export and import. The interface (Tag warnings filter, partial export, Show them button, Arabic) was tested in Chrome on a fake mod with 8 text files and 320 lines.
 - **On every build**, the program reads back everything it just wrote (archive, texts, plain files) and stops if anything doesn't match.
 - **Tags**: `{int_0}`, `<Rich ...>`, `%d`, `\(...)` and line breaks are compared between the English and the translation, with a warning if they differ.
 

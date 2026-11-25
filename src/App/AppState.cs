@@ -42,6 +42,8 @@ public sealed class Settings
 }
 
 public record PathRequest(string Path, string? Name = null);
+/// <summary>Export TSV : Ids = numeros des lignes a exporter (celles que la page affiche), null = tout.</summary>
+public record ExportRequest(string? Path, int[]? Ids = null);
 public record TranslationUpdate(int Id, string? Fr);
 public record LinkUpdate(int Id, bool Apply);
 public record ClientLog(string? Level, string? Message);
@@ -494,17 +496,22 @@ public sealed class AppState : IDisposable
         }
     }
 
-    public object ExportTsv(string folder)
+    /// <param name="ids">Lignes affichees par les filtres de la page : seules elles sont exportees (null = tout).</param>
+    public object ExportTsv(string? folder, int[]? ids)
     {
         lock (_lock)
         {
             var p = RequireProject();
             var dir = string.IsNullOrWhiteSpace(folder) ? Settings.OutputDir : folder.Trim();
             Directory.CreateDirectory(dir);
-            var file = Path.Combine(dir, TranslationProject.SafeName(p.Mod.Name) + ".tsv");
-            p.ExportTsv(file);
-            Log.Info("TSV exporte : " + file);
-            return new { file };
+            HashSet<TextUnit>? only = null;
+            if (ids != null)
+                only = ids.Where(i => i >= 0 && i < p.Units.Count).Select(i => p.Units[i]).ToHashSet();
+            // Export filtre : nom a part, pour ne pas ecraser un export complet
+            var file = Path.Combine(dir, TranslationProject.SafeName(p.Mod.Name) + (only != null ? "_filtered" : "") + ".tsv");
+            var count = p.ExportTsv(file, only: only);
+            Log.Info($"TSV exporte : {file} ({count} ligne(s){(only != null ? ", lignes affichees par les filtres" : "")})");
+            return new { file, count, filtered = only != null };
         }
     }
 

@@ -15,10 +15,10 @@ public sealed class XlLocalization
 
     public static XlLocalization? Load(string path)
     {
-        var lines = SharedFile.ReadAllLines(path)
+        var lines = JoinFlowLists(SharedFile.ReadAllLines(path)
             .Select(Clean)
             .Where(l => l.Text.Length > 0)
-            .ToList();
+            .ToList());
 
         var start = lines.FindIndex(l => l.Indent == 0 && l.Text.StartsWith("localization:"));
         if (start < 0) return null;
@@ -72,6 +72,29 @@ public sealed class XlLocalization
             AddPaths(xl, section, lang, v.Length > 0 ? ParseValues(v) : new List<string>());
         }
         return xl;
+    }
+
+    /// <summary>
+    /// Une liste entre crochets peut s'etendre sur plusieurs lignes ("en-us: [" puis un chemin par ligne, puis "]") :
+    /// ses lignes sont recollees en une seule, sinon chaque chemin serait pris pour une langue.
+    /// </summary>
+    private static List<(int Indent, string Text)> JoinFlowLists(List<(int Indent, string Text)> lines)
+    {
+        static int Depth(string s) => s.Count(c => c == '[') - s.Count(c => c == ']');
+        var result = new List<(int Indent, string Text)>();
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var (indent, text) = lines[i];
+            var depth = Depth(text);
+            while (depth > 0 && i + 1 < lines.Count)
+            {
+                var next = lines[++i].Text;
+                text += (text.EndsWith('[') || next.StartsWith(']') ? "" : " ") + next;
+                depth += Depth(next);
+            }
+            result.Add((indent, text));
+        }
+        return result;
     }
 
     private static void AddPaths(XlLocalization xl, string section, string lang, List<string> paths)

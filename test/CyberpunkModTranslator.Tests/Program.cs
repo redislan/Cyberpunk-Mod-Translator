@@ -269,6 +269,107 @@ Test(".xl qui ne porte pas le nom de l'archive : il est lu", () =>
     Check(p.Targets.Count == 1 && p.Targets[0].TargetPath.EndsWith("french.json"), "la cible est le fichier fr-fr declare dans le .xl");
 });
 
+Test("plusieurs .xl pour la meme archive (comme ArchiveXL, qui les lit tous) : tous les fichiers de textes sont lus", () =>
+{
+    var mod = Dir("multixl", "MyMod");
+    var dir = Path.Combine(mod, "archive", "pc", "mod");
+    Archive(Path.Combine(dir, "mymod.archive"),
+        (@"mymod\localization\items.json", FakeLoc.OnScreens((0, "Items-1", "Items text"))),
+        (@"mymod\text\perks.json", FakeLoc.OnScreens((0, "Perks-1", "Perks text"))),
+        (@"mymod\text\skills.json", FakeLoc.OnScreens((0, "Skills-1", "Skills text"))),
+        (@"mymod\text\shards.json", FakeLoc.OnScreens((0, "Shards-1", "Shards text"))));
+    Text(Path.Combine(dir, "mymod.archive.xl"), "localization:\n  onscreens:\n    en-us: mymod\\localization\\items.json\n");
+    Text(Path.Combine(dir, "mymod_perks.xl"), "localization:\n  onscreens:\n    en-us:\n      - mymod\\text\\perks.json\n      - mymod\\text\\skills.json\n");
+    Text(Path.Combine(dir, "MyMod", "shards.xl"), "localization:\n  onscreens:\n    en-us: mymod\\text\\shards.json\n");
+    using var p = TranslationProject.Scan(mod, comp);
+    var texts = p.Units.Select(u => u.Source).OrderBy(x => x).ToList();
+    Check(texts.SequenceEqual(new[] { "Items text", "Perks text", "Shards text", "Skills text" }),
+        $"les 4 fichiers sont lus (mesure : {string.Join(", ", texts)})");
+});
+
+Test("un .xl qui declare les textes de deux archives : chaque fichier lu une fois, pas de fausse alerte", () =>
+{
+    var mod = Dir("xltwoarchives", "MyMod");
+    var dir = Path.Combine(mod, "archive", "pc", "mod");
+    Archive(Path.Combine(dir, "a.archive"), (@"mymod\text\a.json", FakeLoc.OnScreens((0, "A", "Text A"))));
+    Archive(Path.Combine(dir, "b.archive"), (@"mymod\text\b.json", FakeLoc.OnScreens((0, "B", "Text B"))));
+    Text(Path.Combine(dir, "texts.xl"), "localization:\n  onscreens:\n    en-us:\n      - mymod\\text\\a.json\n      - mymod\\text\\b.json\n");
+    using var p = TranslationProject.Scan(mod, comp);
+    Check(p.Units.Count == 2 && p.Targets.Select(t => t.ArchiveName).Distinct().Count() == 2, $"2 lignes, une par archive (mesure : {p.Units.Count})");
+    Check(p.Notes.Count == 0, "aucune remarque : " + string.Join(" | ", p.Notes));
+});
+
+Test("mod a options : le .xl d'une autre option n'est pas lu pour cette archive", () =>
+{
+    var mod = Dir("xloptions", "MyMod");
+    foreach (var (opt, lang) in new[] { ("Option A", "fr-fr"), ("Option B", "de-de") })
+    {
+        var dir = Path.Combine(mod, opt, "archive", "pc", "mod");
+        Archive(Path.Combine(dir, $"{opt[^1]}.archive"),
+            (@"mymod\en.json", FakeLoc.OnScreens((0, "K", "Hello"))), (@"mymod\other.json", FakeLoc.OnScreens((0, "K", "Hallo"))));
+        Text(Path.Combine(dir, "texts.xl"), $"localization:\n  onscreens:\n    en-us: mymod\\en.json\n    {lang}: mymod\\other.json\n");
+    }
+    using var p = TranslationProject.Scan(mod, comp);
+    var a = p.Targets.Where(t => t.ArchiveName == "A.archive").Select(t => t.TargetPath).ToList();
+    Check(a.Count == 1 && a[0] == @"mymod\other.json", "Option A : la cible fr-fr de son propre .xl");
+    var b = p.Targets.Where(t => t.ArchiveName == "B.archive").Select(t => t.TargetPath).ToList();
+    Check(b.Count == 1 && b[0] == @"mymod\en.json", "Option B : pas de fr-fr dans son .xl, l'anglais est remplace");
+});
+
+Test(".xl avec une liste [ ... ] ecrite sur plusieurs lignes : tous les chemins sont lus", () =>
+{
+    var mod = Dir("flowlist", "MyMod");
+    var dir = Path.Combine(mod, "archive", "pc", "mod");
+    Archive(Path.Combine(dir, "mymod.archive"),
+        (@"mymod\text\a.json", FakeLoc.OnScreens((0, "A", "Text A"))),
+        (@"mymod\text\b.json", FakeLoc.OnScreens((0, "B", "Text B"))),
+        (@"mymod\text\c.json", FakeLoc.OnScreens((0, "C", "Text C"))));
+    Text(Path.Combine(dir, "mymod.archive.xl"),
+        "localization:\n  onscreens:\n    en-us: [\n      mymod\\text\\a.json,\n      \"mymod\\text\\b.json\",\n      mymod\\text\\c.json\n    ]\n");
+    using var p = TranslationProject.Scan(mod, comp);
+    Check(p.Units.Count == 3 && p.Targets.All(t => t.TargetPath.StartsWith(@"mymod\text\")), $"3 lignes de 3 fichiers (mesure : {p.Units.Count})");
+});
+
+Test("fichier de textes sans « localization » dans son chemin et sans .xl : lu quand meme", () =>
+{
+    var mod = Dir("nolocword", "MyMod");
+    Archive(Path.Combine(mod, "archive", "pc", "mod", "mymod.archive"),
+        (@"mymod\localization\items.json", FakeLoc.OnScreens((0, "Items-1", "Items text"))),
+        (@"mymod\data\weapons.json", FakeLoc.OnScreens((0, "Weapons-1", "Weapons text"))));
+    using var p = TranslationProject.Scan(mod, comp);
+    Check(p.Units.Count == 2, $"les 2 fichiers sont lus (mesure : {p.Units.Count})");
+});
+
+Test(".xl qui ne declare qu'une partie des fichiers dans la langue cible : le reste vient de la langue de secours", () =>
+{
+    var mod = Dir("partialxl", "MyMod");
+    var dir = Path.Combine(mod, "archive", "pc", "mod");
+    Archive(Path.Combine(dir, "mymod.archive"),
+        (@"mymod\en\items.json", FakeLoc.OnScreens((0, "Items-1", "Items text"))),
+        (@"mymod\en\perks.json", FakeLoc.OnScreens((0, "Perks-1", "Perks text"))),
+        (@"mymod\en\skills.json", FakeLoc.OnScreens((0, "Skills-1", "Skills text"))),
+        (@"mymod\fr\items.json", FakeLoc.OnScreens((0, "Items-1", "Texte des objets"))));
+    Text(Path.Combine(dir, "mymod.archive.xl"),
+        "localization:\n  onscreens:\n    en-us:\n      - mymod\\en\\items.json\n      - mymod\\en\\perks.json\n      - mymod\\en\\skills.json\n    fr-fr:\n      - mymod\\fr\\items.json\n");
+    using var p = TranslationProject.Scan(mod, comp);
+    var targets = p.Targets.Select(t => t.TargetPath).OrderBy(x => x).ToList();
+    Check(targets.SequenceEqual(new[] { @"mymod\en\perks.json", @"mymod\en\skills.json", @"mymod\fr\items.json" }),
+        $"cibles : la version fr-fr declaree + les 2 fichiers anglais qu'elle ne couvre pas (mesure : {string.Join(", ", targets)})");
+    Check(p.Units.Single(u => u.Source == "Items text").Status == UnitStatus.AlreadyTranslated, "la ligne deja traduite par l'auteur est reconnue");
+    Check(p.Units.Count(u => u.Status == UnitStatus.ToTranslate) == 2, "2 lignes a traduire");
+});
+
+Test("lignes de commentaire d'un fichier de textes (cle « --- » ou « === ») : du code, ArchiveXL les ignore", () =>
+{
+    var mod = Dir("comments", "MyMod");
+    Archive(Path.Combine(mod, "archive", "pc", "mod", "m.archive"),
+        (@"mod\localization\en-us\a.json", FakeLoc.OnScreens((0, "----- Weapons -----", "Weapons section"), (0, "== Notes", "Some notes"), (0, "MyMod-Gun", "A big gun"))));
+    using var p = TranslationProject.Scan(mod, comp);
+    Check(p.Units.Single(u => u.Source == "Weapons section").Status == UnitStatus.Code, "« ----- » = code");
+    Check(p.Units.Single(u => u.Source == "Some notes").Status == UnitStatus.Code, "« == » = code");
+    Check(p.Units.Single(u => u.Source == "A big gun").Status == UnitStatus.ToTranslate, "la vraie ligne reste a traduire");
+});
+
 Test("gros JSON (40 000 valeurs) : analyse en moins de 5 secondes", () =>
 {
     var sb = new StringBuilder("{\n");
@@ -359,6 +460,25 @@ Test("cle numerique longue : protegee d'Excel, et retrouvee meme si Excel l'a ab
     File.WriteAllText(tsv, text.Replace("k:12345678901234567", "1,23457E+16"));
     p.Units[0].Translation = null;
     Check(p.ImportTsv(tsv).Applied == 1 && p.Units[0].Translation == "Bonjour", "retrouvee par le texte anglais");
+});
+
+Test("export TSV des seules lignes affichees : le fichier ne contient qu'elles, le reimport ne touche pas aux autres", () =>
+{
+    var mod = Dir("partialtsv", "MyMod");
+    Archive(Path.Combine(mod, "archive", "pc", "mod", "m.archive"),
+        (@"mod\localization\en-us\a.json", FakeLoc.OnScreens((0, "A", "First text"), (0, "B", "Second text"), (0, "C", "Third text"))));
+    var tsv = Path.Combine(Dir("partialtsv"), "part.tsv");
+    using var p = TranslationProject.Scan(mod, comp);
+    p.Units[0].Translation = "Premier texte";
+    var only = new HashSet<TextUnit> { p.Units[1], p.Units[2] };
+    Check(p.ExportTsv(tsv, only: only) == 2, "2 lignes exportees");
+    var lines = File.ReadAllLines(tsv);
+    Check(lines.Length == 3 && !lines.Any(l => l.Contains("First text")), "en-tete + 2 lignes, sans la ligne non choisie");
+    File.WriteAllText(tsv, File.ReadAllText(tsv).Replace("\tSecond text\t\t", "\tSecond text\tDeuxieme texte\t"));
+    var (applied, warnings) = p.ImportTsv(tsv);
+    Check(applied == 1 && warnings.Count == 0, $"1 ligne importee (mesure : {applied})");
+    Check(p.Units[0].Translation == "Premier texte" && p.Units[1].Translation == "Deuxieme texte" && p.Units[2].Translation == null,
+        "la traduction hors du fichier est intacte");
 });
 
 Console.WriteLine("Fichiers en clair");

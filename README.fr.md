@@ -1,8 +1,21 @@
-# Cyberpunk Mod Translator — v0.8.1
+# Cyberpunk Mod Translator — v0.9.0
 
 *[English version](README.md)*
 
-## Nouveautés de la v0.8.1
+## Nouveautés de la v0.9.0
+
+**Mods dont les textes n'étaient lus qu'en partie**
+- Un mod peut répartir ses fichiers de textes entre plusieurs fichiers `.xl` d'ArchiveXL (un par fonction, dans des sous-dossiers…). ArchiveXL les lit tous ; l'outil n'en lisait qu'un par archive, donc une partie des textes manquait (par exemple 1 fichier JSON sur 8). Tous les `.xl` du mod sont maintenant lus, comme le fait ArchiveXL.
+- Les fichiers de textes dont le chemin ne contient pas `localization` sont trouvés aussi, et les listes de `.xl` écrites sur plusieurs lignes (`en-us: [` … `]`) sont lues.
+- Quand le `.xl` d'un mod déclare moins de fichiers dans ta langue qu'en anglais, ArchiveXL affiche les textes manquants dans sa langue de repli : ces fichiers sont maintenant proposés à la traduction.
+- Les lignes de commentaire des fichiers de textes (clé qui commence par `---` ou `===`) sont classées en code : ArchiveXL ne les charge jamais.
+
+**TSV et balises**
+- **TSV ▾ → Exporter les lignes affichées** : n'exporte que ce que les filtres affichent (statut, fichier, recherche, « Non traduites seulement », balises). Décoche « À vérifier » et « Déjà traduit » pour n'avoir que les lignes à traduire. L'import de ce fichier ne touche qu'à ces lignes.
+- Filtre **Balises à vérifier** : n'affiche que les lignes traduites dont les balises (`{int_0}`, `<Rich …>`, `%d`, `\n`…) diffèrent de l'anglais, avec leur nombre. Pratique après une traduction par IA. La fenêtre de fabrication a un bouton **Les afficher** qui l'active.
+- La case de traduction suit le sens du texte : les langues de droite à gauche (arabe) s'affichent correctement.
+
+## v0.8.1
 
 Version de corrections, après une relecture complète du code.
 
@@ -43,12 +56,12 @@ Le reste de l'appli :
 
 - **Parcourir** : partout, c'est la vraie fenêtre « Ouvrir » de Windows. Le dossier « mods » de MO2, le dossier du jeu et le dossier de sortie y sont ajoutés en raccourcis à gauche. Windows retient le dernier dossier utilisé pour chaque usage. Si la fenêtre ne peut pas s'ouvrir, l'explorateur intégré prend le relais (il reste aussi accessible par le lien « Explorateur intégré »).
 - **Fichiers** (à gauche) : filtre par fichier, avec l'avancement de chacun.
-- **Filtres** : par statut (À traduire, À vérifier, Déjà traduit, Code), « Non traduites seulement », recherche dans l'anglais et le français.
+- **Filtres** : par statut (À traduire, À vérifier, Déjà traduit, Code), « Non traduites seulement », « Balises à vérifier » (lignes traduites dont les balises diffèrent de l'anglais), recherche dans l'anglais et le français.
 - **Détails** (à droite) : d'où vient la ligne (archive, fichier, clé, ligne de code), et les balises à garder. Les boutons « Copier l'anglais » et « Remettre l'original » sont là aussi.
 - **⇄ lié au code** : ce texte sert aussi d'identifiant dans le code du mod (voir plus bas). Sa traduction est reportée automatiquement là où le code le compare. Le détail de la ligne montre où, avec une case pour désactiver le report.
 - **Raccourcis** : `Ctrl+Entrée` ou `Alt+↓` pour la ligne suivante, `Alt+↑` pour la précédente, `Ctrl+S` pour enregistrer, `Ctrl+F` pour rechercher.
 - **Reprendre une trad** : récupère les textes d'une trad déjà faite (dossier ou zip), par exemple pour mettre une trad à jour après une nouvelle version du mod.
-- **TSV** : export et import pour travailler dans Excel.
+- **TSV** : export et import pour travailler dans Excel ou avec une IA. « Exporter toutes les lignes » ou « Exporter les lignes affichées » (seulement ce que les filtres affichent). L'import d'un TSV partiel ne touche pas aux autres lignes.
 - **Paramètres** : langue de l'interface, thème, dossier du jeu (pour la DLL de compression), dossier « mods » de MO2 (lu aussi par l'onglet Modlist), dossier de sortie, langue cible.
 - **Données** : réglages et sauvegardes dans `%AppData%\CyberpunkModTranslator` (`reglages.json`, `projets\*.tsv`, `modlist-cache.json`), et un journal par session dans `logs\` (les 10 derniers sont gardés). Les langues de l'interface et les thèmes sont à côté de l'exe, dans `lang\` et `themes\`.
 
@@ -152,7 +165,8 @@ Ne modifie pas la colonne `anglais` : à l'import, une ligne dont l'anglais ne c
 
 ## Comment le programme choisit le fichier à écrire (archives)
 
-1. Si le `.xl` déclare un fichier `fr-fr`, c'est celui-là qui est remplacé. C'est le cas de NCI.
+0. Comme ArchiveXL, le programme lit **tous** les fichiers `.xl` du mod (sous-dossiers compris) qui déclarent un fichier de l'archive. Chaque `.xl` a ses propres langues. Un `.xl` d'un autre dossier d'option du mod n'est pas utilisé.
+1. Si le `.xl` déclare un fichier `fr-fr`, c'est celui-là qui est remplacé. C'est le cas de NCI. S'il déclare moins de fichiers `fr-fr` que de fichiers dans la langue de repli, les fichiers de repli restants sont remplacés aussi : ArchiveXL les affiche pour les textes manquants.
 2. Si le `.xl` ne déclare pas de `fr-fr`, le programme remplace la langue de repli d'ArchiveXL, c'est-à-dire la première déclarée.
 3. Sans `.xl` : si l'archive contient une version `fr-fr`, il la remplace ; sinon il remplace le fichier anglais.
 4. Les cartes de sous-titres (`*_subtitles.json`) sont suivies jusqu'aux vrais fichiers de sous-titres.
@@ -214,6 +228,7 @@ Si on traduit seulement le premier, `Equals(category, "Background")` ne trouve p
 - **v0.8, thèmes** : les cinq thèmes ont été vérifiés sur des captures du tableau de traduction et des Paramètres. Aperçu, Annuler, Échap, Enregistrer et rechargement de la page ont été testés dans le navigateur, ainsi que des fichiers de thème avec espaces ou accents dans le nom, des images dans un sous-dossier, et un thème enregistré puis supprimé du dossier (le thème par défaut revient, avec une ligne dans le journal). Les chemins qui essaient de sortir du dossier `themes` sont refusés.
 - **v0.8.1, tests automatiques** (`test.bat`) : 28 tests fabriquent de faux mods et vérifient le résultat : cycle complet, sécurité du dossier de sortie (rien d'effacé qui ne vienne pas de l'outil), mise à jour d'un mod, noms et clés en double, archives abîmées, fichiers sans chemin, zip avec dossier englobant, encodages, textes piégés, tri texte / code.
 - **v0.8.1, sur 9 mods open source de GitHub** (AMM, CyberScript, Equipment-EX, Let There Be Flight, les mods de djkovrik…, environ 500 000 chaînes) : chaque chaîne dont le tri a changé a été comparée avant/après, et les 331 fichiers en clair ont été refabriqués avec une traduction pleine de guillemets et d'accents sur chaque ligne, puis relus.
+- **v0.9.0, tests automatiques** : 36 tests. Nouveaux : plusieurs `.xl` pour une archive (le cas signalé : 1 fichier JSON sur 8 chargé), listes de `.xl` sur plusieurs lignes, fichiers de textes sans `localization` dans le chemin, langue cible partielle dans le `.xl`, un `.xl` pour deux archives, dossiers d'option, lignes de commentaire, export et import d'un TSV partiel. L'interface (filtre des balises, export partiel, bouton « Les afficher », arabe) a été testée dans Chrome sur un faux mod de 8 fichiers de textes et 320 lignes.
 - **À chaque construction**, le programme relit tout ce qu'il vient d'écrire (archive, textes, fichiers en clair) et s'arrête si quelque chose ne correspond pas.
 - **Balises** : `{int_0}`, `<Rich ...>`, `%d`, `\(...)` et les retours à la ligne sont comparés entre l'anglais et le français, avec un avertissement si ça diffère.
 
